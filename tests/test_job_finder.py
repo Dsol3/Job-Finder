@@ -422,3 +422,26 @@ class TestTelegram(unittest.TestCase):
             joined = "\n".join(out)
             self.assertIn("--setup-telegram", joined)
             self.assertIn("reddit unreachable", joined)
+
+
+class TestDemo(unittest.TestCase):
+    def test_demo_sends_sample_without_storing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.toml"
+            cfg_path.write_text(f"""
+[notify]
+channel = "console"
+
+[storage]
+db_path = "{Path(tmp) / 'seen.sqlite3'}"
+bootstrap = false
+""")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cli.main(["--config", str(cfg_path), "--demo"])
+            out = buf.getvalue()
+            self.assertEqual(code, 0, out)
+            self.assertIn("SAMPLE", out)
+            store = Store(Path(tmp) / "seen.sqlite3")
+            self.assertEqual(store.count(), 0)  # demo must not pollute dedupe
+            store.close()

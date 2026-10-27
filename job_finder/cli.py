@@ -4,6 +4,7 @@
     python -m job_finder --loop              sweep forever (interval from config)
     python -m job_finder --dry-run           print matches, touch nothing else
     python -m job_finder --fixture file.json replay a saved payload offline
+    python -m job_finder --demo              push one sample alert (no store writes)
     python -m job_finder --setup-telegram    interactive telegram setup
     python -m job_finder --doctor            check config, reddit, telegram
     python -m job_finder --test-telegram     verify credentials
@@ -88,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="print matches, send nothing, save nothing")
     parser.add_argument("--fixture", default=None, help="read a saved .json/.rss payload instead of the network")
     parser.add_argument("--subreddits", default=None, help="comma separated override, e.g. HireaWriter,forhire")
+    parser.add_argument("--demo", action="store_true", help="send one sample alert from the fixture to your push channel")
     parser.add_argument("--setup-telegram", action="store_true", help="interactive Telegram setup (writes .env)")
     parser.add_argument("--doctor", action="store_true", help="check config, Reddit and Telegram")
     parser.add_argument("--test-telegram", action="store_true", help="send a test message and exit")
@@ -109,6 +111,24 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config)
     store = Store(cfg["storage"].get("db_path", "seen.sqlite3"))
     notifier = Notifier(cfg, dry_run=args.dry_run, quiet=args.quiet)
+
+    if args.demo:
+        demo_cfg = load_config(args.config)
+        demo_cfg["notify"]["channel"] = "telegram"
+        demo_notifier = Notifier(demo_cfg, dry_run=False, quiet=False)
+        posts = reddit.load_fixture(str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "forhire_new.json"))
+        ranked = process(posts, demo_cfg)
+        if not ranked:
+            print("no fixture post matched — check your include rules in config.toml")
+            store.close()
+            return 1
+        sample = ranked[0]
+        sample.title = "[SAMPLE — not a real post] " + sample.title
+        demo_notifier.send(sample)
+        print(f"\n  demo sent via {demo_notifier.mode} "
+              f"({demo_notifier.sent} ok, {demo_notifier.failed} failed). Nothing was saved to the seen store.")
+        store.close()
+        return 0 if demo_notifier.failed == 0 else 1
 
     if args.doctor:
         code = telegram.run_doctor(cfg, store)

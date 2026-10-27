@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 32 offline tests, no network
+python3 -m unittest discover -s tests  # 33 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -251,6 +251,7 @@ subreddits = ["HireaWriter", "forhire", "CreatorServices", "PartneredYoutube", "
 | `python3 -m job_finder --subreddits HireaWriter,forhire` | override boards for one run |
 | `python3 -m job_finder --setup-telegram` | interactive wizard: token → chat id → test message → `.env` |
 | `python3 -m job_finder --doctor` | check config, Reddit reachability and Telegram in one pass |
+| `python3 -m job_finder --demo` | push one sample alert card so you can see the format (writes nothing) |
 | `python3 -m job_finder --test-telegram` | just re-send a test message |
 | `python3 -m job_finder --stats` | how many posts are in the dedupe store |
 | `python3 -m job_finder --prune 90` | drop seen-post history older than 90 days |
@@ -266,7 +267,7 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          32 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          33 offline tests (fixtures + a local HTTP server for the fetch path)
 deploy/         systemd unit
 setup.bat       Windows one-click setup (finds Python, wizard, doctor)
 run-watcher.bat Windows one-click watcher (leave window open)
