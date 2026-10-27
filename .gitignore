@@ -1,0 +1,23 @@
+# secrets / local state
+config.toml
+.env
+seen.sqlite3
+matches.jsonl
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store

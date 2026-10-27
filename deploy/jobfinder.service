@@ -1,0 +1,23 @@
+[Unit]
+Description=Reddit job watcher (content writing + YouTube strategy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_ME
+WorkingDirectory=/home/REPLACE_ME/Job-Finder
+Environment=TELEGRAM_BOT_TOKEN=REPLACE_ME
+Environment=TELEGRAM_CHAT_ID=REPLACE_ME
+ExecStart=/usr/bin/python3 -m job_finder --loop --quiet
+Restart=always
+RestartSec=30
+# keep it lightweight and contained
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/REPLACE_ME/Job-Finder
+
+[Install]
+WantedBy=multi-user.target
