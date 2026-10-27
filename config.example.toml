@@ -17,9 +17,11 @@ subreddits = [
   "NewTubers",            # smaller creators, lower budgets
 ]
 
-limit = 100                 # posts to pull per subreddit per sweep (max 100)
+limit = 100                 # posts per request (Reddit caps a listing at 100)
 max_age_hours = 36          # ignore anything older than this
-request_delay_sec = 2.0     # pause between subreddits, be polite
+request_delay_sec = 2.0     # pause between batches; only matters above 8 boards
+                            # all your boards are fetched in ONE request
+                            # (/r/a+b+c/new.json), which is what avoids 403/429
 poll_interval_sec = 300     # only used by --loop (5 min)
 user_agent = "script:job-finder:v1.0 (personal job watcher)"
 

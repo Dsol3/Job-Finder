@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 try:  # Python 3.11+
@@ -96,7 +97,21 @@ def load_config(path: str | Path | None = None) -> dict:
     """
     load_env_file()
     cfg = _merge(DEFAULTS, {})
-    candidates = [Path(path)] if path else [Path("config.toml"), Path("config.example.toml")]
+
+    if path:
+        # An explicit --config is a promise: if it is missing or unreadable we
+        # must fail loudly. Silently falling back to built-in defaults once hid
+        # a missing config.ci.toml and made the watcher check only 2 boards.
+        explicit = Path(path)
+        if not explicit.is_file():
+            raise ConfigError(
+                f"config file not found: {explicit}\n"
+                f"  (looked in {explicit.resolve().parent})\n"
+                "  Check the path, or run 'git pull' if it should have been committed."
+            )
+        candidates = [explicit]
+    else:
+        candidates = [Path("config.toml"), Path("config.example.toml")]
 
     for candidate in candidates:
         if candidate.is_file():
@@ -108,8 +123,14 @@ def load_config(path: str | Path | None = None) -> dict:
                     "    python3 -m pip install --user tomli\n"
                     "    or upgrade to Python 3.11+"
                 )
-            with candidate.open("rb") as fh:
-                cfg = _merge(cfg, tomllib.load(fh))
+            try:
+                with candidate.open("rb") as fh:
+                    loaded = tomllib.load(fh)
+            except ConfigError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - tomllib's error type varies
+                raise ConfigError(_toml_help(candidate, exc)) from None
+            cfg = _merge(cfg, loaded)
             break
 
     notify = cfg["notify"]
@@ -123,6 +144,30 @@ def load_config(path: str | Path | None = None) -> dict:
     subs = [s.strip().removeprefix("r/") for s in cfg["reddit"]["subreddits"] if s.strip()]
     cfg["reddit"]["subreddits"] = subs
     return cfg
+
+
+def _toml_help(path: Path, exc: Exception) -> str:
+    """Turn a TOML parser error into something a human can act on."""
+    message = str(exc)
+    location = ""
+    match = re.search(r"line (\d+), column (\d+)", message)
+    if match:
+        line_no = int(match.group(1))
+        try:
+            line = path.read_text(encoding="utf-8").splitlines()[line_no - 1].strip()
+            location = f"\n  line {line_no}: {line}"
+        except (OSError, IndexError):
+            location = f"\n  line {line_no}"
+    hint = ""
+    if "twice" in message or "already exists" in message:
+        hint = ("\n  A [section] appears more than once. Merge them, or start fresh:\n"
+                f"    copy config.example.toml {path.name}")
+    elif "Expected" in message or "Unclosed" in message:
+        hint = "\n  Usually a missing or unbalanced quote somewhere near that line."
+    return (
+        f"{path} is not valid TOML:{location}\n"
+        f"  {message.splitlines()[0]}{hint}"
+    )
 
 
 def visible_config(cfg: dict) -> dict:

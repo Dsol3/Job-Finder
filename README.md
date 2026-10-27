@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 42 offline tests, no network
+python3 -m unittest discover -s tests  # 52 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -317,6 +317,42 @@ journalctl -u jobfinder -f
 Datacenter IPs sometimes get 403s from Reddit; the watcher falls back to `old.reddit.com`
 then to the Atom feed automatically, and a home connection is never a problem.
 
+## Throttling, and why most boards used to go silent
+
+Reddit refuses unauthenticated requests hard: `403` first, then `429` once you keep knocking.
+The original implementation asked each board separately and tried three endpoints per board, so
+an 8-board watchlist could fire up to 24 requests in a few seconds — and the boards at the end of
+the list returned nothing at all. Symptom in the log:
+
+```
+fetched r/forhire: 0 new posts      <- actually "403, 403, 429"
+fetched r/NewTubers: 0 new posts
+```
+
+Two changes fix it:
+
+1. **One request per batch.** Reddit serves a combined listing at
+   `/r/HireaWriter+forhire+CreatorServices/new.json`, so all eight boards arrive in a single
+   call. Eight requests become one, which is far below the limit instead of far above it.
+2. **Exponential backoff with jitter.** On 403/429/5xx it waits 15s → 30s → 60s (capped at 90s,
+   randomised) before trying the next endpoint, rather than retrying instantly.
+
+Every sweep now ends with a coverage line, so silence is never ambiguous:
+
+```
+  batch 1/1: 87 posts · nothing new in: PartneredYoutube
+  87 posts from 7/8 boards · silent: PartneredYoutube
+  4 matched filters · 2 unseen
+```
+
+- `8/8 boards` + `0 matched` → genuinely nothing in your window matched. Normal.
+- `silent: X` → that board was throttled or empty. `--doctor` reports boards silent for 12h+ and
+  remembers the last successful read per board in `state/fetch_health.json`.
+
+**Still throttled?** Raise `request_delay_sec`, lower `limit`, shorten the watchlist, or run less
+often. GitHub's runner IPs are throttled harder than a home connection — that's the trade-off of
+the free option.
+
 ## How it decides what to show you
 
 Every candidate post goes through four steps (`job_finder/filters.py`):
@@ -397,7 +433,7 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          42 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          52 offline tests (fixtures + a local HTTP server for the fetch path)
 deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
 Dockerfile      container image for Railway/Fly/NAS/any VPS
 docker-compose.yml
@@ -412,6 +448,9 @@ run-watcher.bat Windows one-click watcher (leave window open)
 |---|---|
 | `every endpoint failed -> HTTP 403` | Reddit is blocking your IP. The RSS fallback usually still works. If all three fail, try from another network, or run it on a home connection. |
 | `HTTP 429` | Rate limited. Raise `request_delay_sec` to 5, drop `limit` to 50, fewer subreddits. |
+| `silent: forhire` in the summary | That board was throttled this sweep. It retries automatically; if it stays silent for 12h+, `--doctor` flags it. |
+| `config file not found: …` | `--config` is strict now — the path you gave must exist. Run `git pull`, or drop the flag to use `config.toml`. |
+| `is not valid TOML` | The message names the line and the likely cause (usually a `[section]` pasted twice). Fix it or `copy config.example.toml config.toml`. |
 | No alerts at all | Run `--dry-run` first. If it prints "0 matched filters", your `include` list doesn't match the wording clients actually use — loosen it. |
 | Huge flood of alerts | Tighten `include`, raise `per_word` floor, or drop the broad `youtube` term. |
 | Telegram says 400/403 | Wrong chat id (must be your numeric id, not `@username`), or you never messaged the bot first. |

@@ -310,6 +310,15 @@ def run_doctor(cfg: dict, store=None, out=print) -> int:
                 problems += 1
                 line("✗", f"chat unreachable: {chat.get('description', 'unknown error')}")
 
+    stale = reddit.stale_boards(cfg, hours=12)
+    if stale:
+        problems += 1
+        worst = ", ".join(f"r/{b} ({h:.0f}h)" for b, h in stale[:4])
+        line("✗", f"boards silent for 12h+ (throttled?): {worst}")
+        line(" ", "   see Troubleshooting → '403 / 429 / silent boards' in the README")
+    elif reddit.health_path(cfg).is_file():
+        line("✓", "all watched boards returned posts recently")
+
     sample = subs[0] if subs else "forhire"
     posts = reddit.fetch_subreddit(sample, 5, cfg["reddit"].get("user_agent", "job-finder"))
     if posts:

@@ -6,8 +6,9 @@ import io
 import os
 import sys
 import tempfile
+import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -518,3 +519,204 @@ class TestWorkflow(unittest.TestCase):
 
     def test_fails_loudly_on_missing_secrets(self):
         self.assertIn("::error::Missing repository secrets", self.text)
+
+
+class TestBatching(unittest.TestCase):
+    """The throttle fix: many boards, one request."""
+
+    def test_single_request_for_a_normal_watchlist(self):
+        group = ["HireaWriter", "forhire", "CreatorServices"]
+        urls = reddit.batch_urls(group, 100)
+        self.assertIn("/r/HireaWriter+forhire+CreatorServices/new.json", urls[0])
+        self.assertIn("limit=100", urls[0])
+        self.assertTrue(urls[2].split("?")[0].endswith(".rss"))
+
+    def test_watchlist_split_into_batches(self):
+        boards = [f"sub{i}" for i in range(9)]
+        batches = [boards[i:i + reddit.MULTI_BATCH] for i in range(0, len(boards), reddit.MULTI_BATCH)]
+        self.assertEqual([len(b) for b in batches], [8, 1])
+
+    def test_fetch_all_uses_one_request_for_three_boards(self):
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        hits: list[str] = []
+        boards = ["HireaWriter", "forhire", "CreatorServices"]
+        children = []
+        for index, board in enumerate(boards):
+            children.append({"kind": "t3", "data": {
+                "id": f"p{index}", "subreddit": board, "title": "[Hiring] content writer",
+                "selftext": "paid", "author": "x", "url": "u", "permalink": "/p",
+                "created_utc": 1, "link_flair_text": "Hiring", "score": 1, "num_comments": 0,
+            }})
+        posts = {"kind": "Listing", "data": {"children": children}}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                hits.append(self.path)
+                body = _json.dumps(posts).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        original = reddit.ENDPOINTS
+        reddit.ENDPOINTS = (f"http://127.0.0.1:{server.server_address[1]}/r/{{sub}}/new.json?limit={{limit}}",)
+        try:
+            result = reddit.fetch_all(["HireaWriter", "forhire", "CreatorServices"], 100, "unittest")
+        finally:
+            reddit.ENDPOINTS = original
+            server.shutdown()
+
+        self.assertEqual(len(hits), 1)                      # one request, not three
+        self.assertIn("HireaWriter+forhire+CreatorServices", hits[0])
+        self.assertEqual(len(result.posts), 3)
+        self.assertEqual(result.boards_ok, 3)
+        self.assertTrue(result.complete)
+        self.assertEqual(result.requests, 1)
+
+    def test_backs_off_then_falls_back_to_the_next_endpoint(self):
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        calls: list[str] = []
+        payload = _json.dumps({"kind": "Listing", "data": {"children": [
+            {"kind": "t3", "data": {"id": "p1", "subreddit": "forhire", "title": "t",
+                                    "selftext": "b", "author": "a", "url": "u", "permalink": "/p",
+                                    "created_utc": 1, "link_flair_text": "", "score": 0, "num_comments": 0}},
+        ]}}).encode()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                calls.append(self.path)
+                if "/r/" in self.path and "old" not in self.path:
+                    self.send_response(429)          # throttled
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        port = server.server_address[1]
+        original_endpoints, original_sleep, original_base = reddit.ENDPOINTS, time.sleep, reddit.BACKOFF_BASE
+        slept: list[float] = []
+        reddit.ENDPOINTS = (
+            f"http://127.0.0.1:{port}/r/{{sub}}/new.json?limit={{limit}}",
+            f"http://127.0.0.1:{port}/old/r/{{sub}}/new.json?limit={{limit}}",
+        )
+        reddit.BACKOFF_BASE = 1.0
+        reddit.time.sleep = lambda s: slept.append(s)   # don't actually wait
+        try:
+            result = reddit.fetch_all(["forhire"], 100, "unittest", delay=0)
+        finally:
+            reddit.ENDPOINTS, reddit.time.sleep, reddit.BACKOFF_BASE = (
+                original_endpoints, original_sleep, original_base)
+            server.shutdown()
+
+        self.assertEqual(len(calls), 2, calls)              # throttled once, then recovered
+        self.assertTrue(slept and 1.0 <= slept[0] <= 1.31, slept)  # backoff with jitter
+        self.assertEqual(len(result.posts), 1)
+
+    def test_reports_boards_that_returned_nothing(self):
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        payload = _json.dumps({"kind": "Listing", "data": {"children": [
+            {"kind": "t3", "data": {"id": "p1", "subreddit": "HireaWriter", "title": "t",
+                                    "selftext": "b", "author": "a", "url": "u", "permalink": "/p",
+                                    "created_utc": 1, "link_flair_text": "", "score": 0, "num_comments": 0}},
+        ]}}).encode()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        original = reddit.ENDPOINTS
+        reddit.ENDPOINTS = (f"http://127.0.0.1:{server.server_address[1]}/r/{{sub}}/new.json?limit={{limit}}",)
+        try:
+            result = reddit.fetch_all(["HireaWriter", "forhire"], 100, "unittest")
+        finally:
+            reddit.ENDPOINTS = original
+            server.shutdown()
+
+        self.assertEqual(result.failures, ["forhire"])
+        self.assertFalse(result.complete)
+        self.assertIn("silent: forhire", result.summary())
+
+
+class TestHealth(unittest.TestCase):
+    def test_health_tracks_last_success_and_staleness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_dict()
+            cfg["storage"]["db_path"] = str(Path(tmp) / "seen.sqlite3")
+            result = reddit.FetchResult(attempted=["HireaWriter", "forhire"], counts={"hireawriter": 3})
+            reddit.write_health(cfg, result)
+
+            self.assertEqual(reddit.stale_boards(cfg, hours=1), [("forhire", 999.0)])
+            reddit.write_health(cfg, reddit.FetchResult(attempted=["HireaWriter"], counts={"hireawriter": 1}))
+            self.assertEqual(reddit.stale_boards(cfg, hours=1), [("forhire", 999.0)])
+
+
+class TestConfigErrors(unittest.TestCase):
+    def test_missing_explicit_config_is_fatal(self):
+        from job_finder.config import ConfigError
+
+        with self.assertRaises(ConfigError) as ctx:
+            load_config("definitely-not-here.toml")
+        self.assertIn("config file not found", str(ctx.exception))
+
+    def test_duplicate_section_explains_itself(self):
+        from job_finder.config import ConfigError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("[reddit]\nlimit = 5\n\n[storage]\nbootstrap = true\n\n[reddit]\nlimit = 6\n")
+            with self.assertRaises(ConfigError) as ctx:
+                load_config(path)
+            message = str(ctx.exception)
+            self.assertIn("not valid TOML", message)
+            self.assertIn("line 7", message)
+            self.assertIn("appears more than once", message)
+            self.assertIn("config.example.toml", message)
+
+    def test_broken_quote_is_explained(self):
+        from job_finder.config import ConfigError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[reddit]\nsubreddits = ["a", "b]\n')
+            with self.assertRaises(ConfigError) as ctx:
+                load_config(path)
+            self.assertIn("not valid TOML", str(ctx.exception))
+
+    def test_cli_exits_2_with_message_not_traceback(self):
+        err = io.StringIO()
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["--config", "nope.toml", "--once"])
+        self.assertEqual(code, 2)
+        self.assertIn("config problem", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
