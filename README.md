@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 37 offline tests, no network
+python3 -m unittest discover -s tests  # 42 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -172,24 +172,50 @@ Notes:
 A sleeping laptop misses every post in its window, and on these boards the first hour decides
 everything. Three ways to keep it running, cheapest first.
 
-### Option A — GitHub Actions · free, no server, no card
+### Option A — GitHub Actions · free, no server, no card  ← recommended starter
 
-GitHub's own servers run the sweep every 10 minutes. Nothing to maintain, no credit card.
+GitHub's own servers run the sweep for you. Your laptop can be off. No card, no maintenance.
+This repo is **public**, so Actions minutes are unlimited.
 
-1. Make the repo **public** (Actions minutes are unlimited for public repos; a private repo's
-   2,000 free minutes/month would be eaten by a 10-minute schedule).
-2. Merge this branch into **`main`** — scheduled workflows only fire from the default branch.
-3. Repo → **Settings → Secrets and variables → Actions → New repository secret**, add
-   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-4. Repo → **Actions** tab → *watch* → **Run workflow** to test, then leave it alone.
+**1. Merge this branch into `main`** — scheduled workflows only fire from the default branch.
+Open the Pull Request on GitHub and click *Merge*.
 
-The workflow (`.github/workflows/watch.yml`) caches `state/` between runs so you don't get
-duplicates, and `config.ci.toml` limits it to posts from the last 2 hours so a cache miss can
-never blast you with old listings.
+**2. Add the two secrets** — repo → **Settings → Secrets and variables → Actions → New repository
+secret**:
 
-**Honest trade-offs:** GitHub's cron is best-effort — a "10-minute" schedule often fires 10–25
-minutes late, so you're fast but not *first*. It also needs a monthly keepalive commit (the
-workflow includes a no-op job, but if the schedule ever stops, push any small commit).
+| Name | Value |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | the token from @BotFather |
+| `TELEGRAM_CHAT_ID` | from `.env` in your Job-Finder folder |
+
+**3. Test it once** — **Actions** tab → **watch** (left sidebar) → **Run workflow ▾** → *Run
+workflow*. A green run within ~30s means it's live. If the run is red, open it — the failing step
+says exactly what's wrong (the usual one is a missing secret).
+
+**4. Walk away.** It now runs every 5 minutes, forever, whether your PC is on or not.
+
+**What the schedule actually feels like:** GitHub's cron is best-effort and runs late — asking
+for `*/5` typically fires every 10–20 minutes. That's why the workflow asks for 5 and not 15: you
+asked for 10–15 minutes of latency, and this lands there.
+
+**State between runs:** `state/` (the dedupe database and alert log) is cached by
+`actions/cache`, so you don't get duplicates. `config.ci.toml` limits it to posts from the last
+2 hours, so even if a cache is evicted you can't be blasted with old listings.
+
+**Two things to know:**
+
+- GitHub disables schedules on repos with no commits for 60 days. The `keepalive` job makes a
+  tiny monthly commit so that never happens.
+- Public repo, so the workflow logs are public. Your token is a repository *secret* — GitHub
+  masks it in logs and never exposes it to forks. Your `config.toml` and `.env` are git-ignored.
+  The one thing visible is which jobs matched (titles in the run summary) — if that bothers you,
+  delete the "Show what was sent" step.
+
+**Changing keywords later:** edit `config.ci.toml` (not `config.toml` — the runner uses the CI
+one), commit, done. No restart needed.
+
+**Cost check:** public repos → free, unlimited. You'll see ~288 runs/day in the Actions tab; that
+is expected and free.
 
 ### Option B — a $4–5/month VPS · most reliable
 
@@ -262,7 +288,7 @@ Leave it charging with Wi-Fi on. Ugly, but it's free and it's already in your dr
 
 | | Cost | Speed | Effort | Reliability |
 |---|---|---|---|---|
-| GitHub Actions | free | 10–25 min late | 5 min setup | good |
+| GitHub Actions | free | 10–20 min | 5 min setup | good |
 | $4 VPS | ~$4–5/mo | every 5 min, on time | 10 min setup | best |
 | Oracle Always Free | $0 | every 5 min, on time | 20–40 min setup | good |
 | Old phone | $0 | every 5 min, on time | 10 min setup | depends on the phone |
@@ -371,7 +397,7 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          37 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          42 offline tests (fixtures + a local HTTP server for the fetch path)
 deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
 Dockerfile      container image for Railway/Fly/NAS/any VPS
 docker-compose.yml

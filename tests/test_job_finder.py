@@ -490,3 +490,31 @@ class TestDeploy(unittest.TestCase):
         self.assertIn("PYTHONUNBUFFERED", dockerfile)
         compose = (ROOT / "docker-compose.yml").read_text()
         self.assertIn("jobfinder-data", compose)
+
+
+class TestWorkflow(unittest.TestCase):
+    """No YAML parser in the stdlib, so assert on the things that matter."""
+
+    def setUp(self):
+        self.text = (ROOT / ".github" / "workflows" / "watch.yml").read_text()
+
+    def test_schedule_is_frequent_enough(self):
+        self.assertIn('cron: "*/5 * * * *"', self.text)
+        self.assertIn("workflow_dispatch", self.text)  # manual test run
+
+    def test_uses_both_secrets(self):
+        self.assertIn("secrets.TELEGRAM_BOT_TOKEN", self.text)
+        self.assertIn("secrets.TELEGRAM_CHAT_ID", self.text)
+
+    def test_state_is_cached_not_committed(self):
+        self.assertIn("actions/cache/restore", self.text)
+        self.assertIn("actions/cache/save", self.text)
+        self.assertNotIn("git add state", self.text)  # never commit the dedupe db
+
+    def test_keepalive_actually_commits(self):
+        self.assertIn(".keepalive", self.text)
+        self.assertIn("git push", self.text)
+        self.assertIn("contents: write", self.text)
+
+    def test_fails_loudly_on_missing_secrets(self):
+        self.assertIn("::error::Missing repository secrets", self.text)
