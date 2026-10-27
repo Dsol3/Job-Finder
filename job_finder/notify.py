@@ -52,6 +52,13 @@ class Notifier:
         self.dry_run = dry_run
         self.quiet = quiet
         self.log_path = cfg.get("storage", {}).get("log_path", "")
+        self.has_creds = bool(self.cfg.get("telegram_token") and self.cfg.get("telegram_chat_id"))
+        self.mode = str(self.cfg.get("channel", "auto")).lower()
+        if self.mode == "auto":
+            self.mode = "telegram" if self.has_creds else "console"
+        if self.mode == "telegram" and not self.has_creds:
+            print("  [warn] notify.channel = telegram but no credentials found; using console")
+            self.mode = "console"
         self.sent = 0
         self.failed = 0
 
@@ -131,7 +138,7 @@ class Notifier:
         self._console(text)
         self._log_jsonl(post)
 
-        if self.dry_run or self.cfg.get("channel") == "console":
+        if self.dry_run or self.mode != "telegram":
             self.sent += 1
             return
 
@@ -142,7 +149,7 @@ class Notifier:
 
     def message(self, text: str) -> None:
         """One-off status message (startup, errors, test) to the push channel."""
-        if self.dry_run or self.cfg.get("channel") == "console":
+        if self.dry_run or self.mode != "telegram":
             print(f"[status] {text}")
             return
         token = self.cfg.get("telegram_token", "")

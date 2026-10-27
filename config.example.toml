@@ -88,9 +88,11 @@ bootstrap = true             # on the very first run, mark existing posts as see
                              # so you don't get 200 alerts at once
 
 [notify]
-# "telegram" for phone push, "console" for terminal only.
-channel = "telegram"
-# Leave blank and use env vars instead — keeps secrets out of this file:
+# "auto"  = Telegram when credentials exist, else console  (recommended)
+# "telegram" = always push, "console" = terminal only
+channel = "auto"
+# Leave blank — run `python3 -m job_finder --setup-telegram` and it writes
+# these to a git-ignored .env for you. Env vars also work:
 #   export TELEGRAM_BOT_TOKEN=123456:ABC...
 #   export TELEGRAM_CHAT_ID=987654321
 telegram_token = ""

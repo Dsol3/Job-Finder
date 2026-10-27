@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from job_finder import cli, reddit  # noqa: E402
+from job_finder import cli, reddit, telegram  # noqa: E402
 from job_finder.config import load_config  # noqa: E402
 from job_finder.filters import match, parse_budgets, process, score  # noqa: E402
 from job_finder.store import Store  # noqa: E402
@@ -286,3 +286,139 @@ class TestNetworkLayer(unittest.TestCase):
             self.assertEqual(reddit.fetch_subreddit("test", 100, "unittest"), [])
         finally:
             reddit.ENDPOINTS = original
+
+
+GOOD_TOKEN = "8123456789:" + "AAH" + "x" * 32
+
+
+class TestTelegram(unittest.TestCase):
+    """Drives the real wizard code against a fake Bot API."""
+
+    @classmethod
+    def setUpClass(cls):
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        cls.calls: list[str] = []
+        cls.update_polls = 0
+
+        class Handler(BaseHTTPRequestHandler):
+            def _send(self, payload):
+                body = _json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):  # noqa: N802
+                self.do_POST()
+
+            def do_POST(self):  # noqa: N802
+                method = self.path.rsplit("/", 1)[-1].split("?")[0]
+                cls.calls.append(method)
+                if method == "getMe":
+                    if "bad" in self.path:
+                        self._send({"ok": False, "description": "Unauthorized"})
+                    else:
+                        self._send({"ok": True, "result": {"id": 1, "username": "test_jobwatch_bot"}})
+                elif method == "getUpdates":
+                    cls.update_polls += 1
+                    if cls.update_polls < 2:
+                        self._send({"ok": True, "result": []})
+                    else:
+                        self._send({"ok": True, "result": [{"update_id": 7, "message": {
+                            "chat": {"id": 123456789, "type": "private",
+                                     "first_name": "Ada", "username": "ada"}}}]})
+                elif method == "getChat":
+                    self._send({"ok": True, "result": {"id": 123456789, "first_name": "Ada"}})
+                elif method == "sendMessage":
+                    self._send({"ok": True, "result": {"message_id": 1}})
+                else:
+                    self._send({"ok": False, "description": "unknown method"})
+
+            def log_message(self, *args):
+                pass
+
+        cls.server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.original_api = telegram.TG_API
+        telegram.TG_API = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        telegram.TG_API = cls.original_api
+        cls.server.shutdown()
+
+    def test_token_validation(self):
+        self.assertTrue(telegram.validate_token(GOOD_TOKEN)[0])
+        for bad in ("", "abc", "12345:short"):
+            self.assertFalse(telegram.validate_token(bad)[0])
+
+    def test_discovers_chat_then_writes_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            out = []
+            code = telegram.run_wizard(
+                env_path=env,
+                preset_token=GOOD_TOKEN,
+                ask=lambda *a, **k: "",
+                out=out.append,
+                wait_timeout=10,
+            )
+            self.assertEqual(code, 0, "\n".join(out))
+            text = env.read_text()
+            self.assertIn(f"TELEGRAM_BOT_TOKEN={GOOD_TOKEN}", text)
+            self.assertIn("TELEGRAM_CHAT_ID=123456789", text)
+            self.assertEqual(oct(env.stat().st_mode)[-3:], "600")
+            self.assertIn("Found chat: Ada", "\n".join(out))
+            self.assertIn("sendMessage", self.calls)
+
+    def test_env_is_merged_not_clobbered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("# keep me\nOTHER_KEY=keep\nTELEGRAM_CHAT_ID=old\n")
+            telegram.write_env(env, {"TELEGRAM_CHAT_ID": "999"})
+            parsed = telegram.parse_env(env)
+            self.assertEqual(parsed["OTHER_KEY"], "keep")
+            self.assertEqual(parsed["TELEGRAM_CHAT_ID"], "999")
+            self.assertIn("keep me", env.read_text())
+
+    def test_bad_token_exits_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = []
+            code = telegram.run_wizard(
+                env_path=Path(tmp) / ".env",
+                preset_token="12345:short",
+                out=out.append,
+            )
+            self.assertEqual(code, 2)
+            self.assertFalse((Path(tmp) / ".env").exists())
+
+    def test_auto_mode_picks_telegram_when_creds_exist(self):
+        from job_finder.notify import Notifier
+
+        cfg = cfg_dict()
+        cfg["notify"].update(channel="auto", telegram_token=GOOD_TOKEN, telegram_chat_id="1")
+        self.assertEqual(Notifier(cfg).mode, "telegram")
+        cfg["notify"].update(telegram_token="", telegram_chat_id="")
+        self.assertEqual(Notifier(cfg).mode, "console")
+        cfg["notify"].update(channel="console", telegram_token=GOOD_TOKEN, telegram_chat_id="1")
+        self.assertEqual(Notifier(cfg).mode, "console")
+
+    def test_doctor_reports_missing_creds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_dict()
+            cfg["notify"].update(channel="auto", telegram_token="", telegram_chat_id="")
+            original = reddit.fetch_subreddit
+            reddit.fetch_subreddit = lambda *a, **k: []
+            out = []
+            try:
+                code = telegram.run_doctor(cfg, None, out=out.append)
+            finally:
+                reddit.fetch_subreddit = original
+            self.assertEqual(code, 1)
+            joined = "\n".join(out)
+            self.assertIn("--setup-telegram", joined)
+            self.assertIn("reddit unreachable", joined)

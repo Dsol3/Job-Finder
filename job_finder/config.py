@@ -49,7 +49,8 @@ DEFAULTS = {
         "per_video": 50.0,
     },
     "storage": {"db_path": "seen.sqlite3", "bootstrap": True},
-    "notify": {"channel": "console", "telegram_token": "", "telegram_chat_id": ""},
+    # "auto" = Telegram when credentials exist, otherwise console.
+    "notify": {"channel": "auto", "telegram_token": "", "telegram_chat_id": ""},
 }
 
 
@@ -63,12 +64,26 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+def load_env_file(*candidates: str | Path) -> None:
+    """Load KEY=VALUE pairs from .env into os.environ (real env vars win)."""
+    from .telegram import parse_env
+
+    paths = list(candidates) or [
+        Path(".env"),
+        Path(__file__).resolve().parents[1] / ".env",
+    ]
+    for candidate in paths:
+        for key, value in parse_env(candidate).items():
+            os.environ.setdefault(key, value)
+
+
 def load_config(path: str | Path | None = None) -> dict:
     """Load TOML config, falling back to DEFAULTS for anything missing.
 
     Secrets are read from the environment so the config file can be committed:
       TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     """
+    load_env_file()
     cfg = _merge(DEFAULTS, {})
     candidates = [Path(path)] if path else [Path("config.toml"), Path("config.example.toml")]
 

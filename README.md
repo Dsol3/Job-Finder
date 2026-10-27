@@ -35,7 +35,7 @@ so this does the refreshing and the triage, and you do the writing.
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 26 offline tests, no network
+python3 -m unittest discover -s tests  # 32 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -44,24 +44,66 @@ python3 -m job_finder --once           # first real run
 you don't get 200 alerts at once. You'll start getting pings from the next new post onward.
 (Set `bootstrap = false` under `[storage]` if you'd rather see the current backlog.)
 
-## Telegram push (2 minutes, free)
-
-1. Open Telegram, message **@BotFather**, send `/newbot`, follow the prompts. It gives you a
-   token like `8123456789:AAH...`.
-2. Message your new bot anything (a bot can't DM you first).
-3. Open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and copy the `"id"` inside
-   `"chat":{"id":123456789,...}` — that's your chat id.
-4. Export both and test:
+## Telegram setup (2 minutes)
 
 ```bash
-export TELEGRAM_BOT_TOKEN="8123456789:AAH..."
-export TELEGRAM_CHAT_ID="123456789"
-python3 -m job_finder --test-telegram
-python3 -m job_finder --once
+python3 -m job_finder --setup-telegram
 ```
 
-Secrets come from the environment, so `config.toml` can be committed or shared safely.
-Use a `.env` loader, `direnv`, or just put the exports in your shell profile.
+It walks you through three steps and finds your chat id for you:
+
+```
+── Telegram setup ──────────────────────────────────────────────
+1/3  Get a bot token
+     • Open Telegram → @BotFather → send /newbot
+     • Pick a name, then a username ending in 'bot'
+     • It replies with a token like 8123456789:AAH-xxxxxxxxxxxxxxxxxxxxx
+
+     Paste token (or press Enter to abort): 8123456789:AAH-…
+✓ Connected to @YourJobsBot (token …x9f2)
+
+2/3  Find your chat id
+     Open https://t.me/YourJobsBot and tap START (or send it any message).
+     Waiting for your message…
+✓ Found chat: Tunde (5150233841)
+✓ Chat verified: Tunde
+✓ Test message sent — check Telegram.
+
+Saved to .env (permissions 600). Secrets stay out of git.
+Next: python3 -m job_finder --doctor   then   python3 -m job_finder --once
+```
+
+Then prove everything works end to end:
+
+```
+$ python3 -m job_finder --doctor
+── doctor ──────────────────────────────────────────────────────
+  ✓  8 subreddits configured: HireaWriter, forhire, writersforhire, …
+  ✓  include rules: 20 · exclude rules: 30 · floors: 0.05/word
+  ✓  0 posts remembered in seen.sqlite3
+  ✓  bot token valid (@YourJobsBot, …x9f2)
+  ✓  chat reachable: Tunde (5150233841)
+  ✓  reddit reachable — r/HireaWriter returned 5 posts
+
+All good. Run: python3 -m job_finder --once
+```
+
+### If you'd rather do it by hand
+
+1. @BotFather → `/newbot` → copy the token.
+2. **Message your bot anything** (bots cannot DM you first).
+3. `https://api.telegram.org/bot<TOKEN>/getUpdates` → copy the `id` inside `"chat":{"id":123456789,...}`.
+4. `export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...` or put both in `.env`.
+
+Notes:
+
+- Credentials live in **`.env`** (chmod 600, git-ignored) or in real environment variables,
+  which take precedence. `config.toml` stays safe to share.
+- `notify.channel = "auto"` means: push to Telegram once credentials exist, otherwise print
+  to the console. Set it to `"console"` to force terminal-only.
+- Non-interactive setup for a server: `--setup-telegram --token 123:ABC --chat-id 987654321`.
+- Want a group instead of a DM? Add the bot to the group, send a message there, and the wizard
+  will list it as an option.
 
 ## Running it 24/7
 
@@ -145,7 +187,9 @@ subreddits = ["HireaWriter", "forhire", "CreatorServices", "PartneredYoutube", "
 | `python3 -m job_finder --dry-run` | print matches, send/persist nothing |
 | `python3 -m job_finder --fixture tests/fixtures/forhire_new.json` | replay saved posts offline |
 | `python3 -m job_finder --subreddits HireaWriter,forhire` | override boards for one run |
-| `python3 -m job_finder --test-telegram` | verify bot token + chat id |
+| `python3 -m job_finder --setup-telegram` | interactive wizard: token → chat id → test message → `.env` |
+| `python3 -m job_finder --doctor` | check config, Reddit reachability and Telegram in one pass |
+| `python3 -m job_finder --test-telegram` | just re-send a test message |
 | `python3 -m job_finder --stats` | how many posts are in the dedupe store |
 | `python3 -m job_finder --prune 90` | drop seen-post history older than 90 days |
 
@@ -157,9 +201,10 @@ job_finder/
   filters.py    budget parsing, include/exclude rules, 0-10 scoring
   store.py      SQLite dedupe so you never see the same post twice
   notify.py     Telegram HTML cards + console output + matches.jsonl log
+  telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          26 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          32 offline tests (fixtures + a local HTTP server for the fetch path)
 deploy/         systemd unit
 ```
 

@@ -4,6 +4,8 @@
     python -m job_finder --loop              sweep forever (interval from config)
     python -m job_finder --dry-run           print matches, touch nothing else
     python -m job_finder --fixture file.json replay a saved payload offline
+    python -m job_finder --setup-telegram    interactive telegram setup
+    python -m job_finder --doctor            check config, reddit, telegram
     python -m job_finder --test-telegram     verify credentials
 """
 
@@ -13,8 +15,9 @@ import argparse
 import sys
 import time
 import traceback
+from pathlib import Path
 
-from . import reddit
+from . import reddit, telegram
 from .config import load_config
 from .filters import process
 from .notify import Notifier
@@ -74,15 +77,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="print matches, send nothing, save nothing")
     parser.add_argument("--fixture", default=None, help="read a saved .json/.rss payload instead of the network")
     parser.add_argument("--subreddits", default=None, help="comma separated override, e.g. HireaWriter,forhire")
+    parser.add_argument("--setup-telegram", action="store_true", help="interactive Telegram setup (writes .env)")
+    parser.add_argument("--doctor", action="store_true", help="check config, Reddit and Telegram")
     parser.add_argument("--test-telegram", action="store_true", help="send a test message and exit")
+    parser.add_argument("--token", default="", help="bot token for --setup-telegram (non-interactive)")
+    parser.add_argument("--chat-id", default="", help="chat id for --setup-telegram (skips discovery)")
     parser.add_argument("--stats", action="store_true", help="show how many posts are stored")
     parser.add_argument("--quiet", action="store_true", help="no console output per match")
     parser.add_argument("--prune", type=int, default=0, metavar="DAYS", help="drop seen posts older than DAYS")
     args = parser.parse_args(argv)
 
+    if args.setup_telegram:
+        env_path = Path(args.config).parent / ".env" if args.config else Path(".env")
+        return telegram.run_wizard(
+            env_path=env_path,
+            preset_token=args.token,
+            preset_chat=args.chat_id,
+        )
+
     cfg = load_config(args.config)
     store = Store(cfg["storage"].get("db_path", "seen.sqlite3"))
     notifier = Notifier(cfg, dry_run=args.dry_run, quiet=args.quiet)
+
+    if args.doctor:
+        code = telegram.run_doctor(cfg, store)
+        store.close()
+        return code
 
     if args.stats:
         print(f"{store.count()} posts in {cfg['storage'].get('db_path')}")
