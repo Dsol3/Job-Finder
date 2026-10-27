@@ -1,0 +1,109 @@
+# Free, serverless option: GitHub runs the sweep for you.
+#
+#   * public repo  -> unlimited Actions minutes (this repo is public)
+#   * cron */5     -> GitHub fires scheduled jobs late, typically 5-20 min.
+#                     Asking for 5 min lands you at roughly 10-15 min, which
+#                     is the target. Asking for 15 would land at 25-35.
+#   * schedules only run on the DEFAULT branch (main), so this must be merged.
+#
+# Setup, once:
+#   Settings -> Secrets and variables -> Actions -> add
+#     TELEGRAM_BOT_TOKEN   (from @BotFather)
+#     TELEGRAM_CHAT_ID     (from your .env)
+#
+name: watch
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check credentials are configured
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$CHAT" ]; then
+            echo "::error::Missing repository secrets. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "credentials present"
+
+      # Dedupe memory between runs. A fresh key each run + prefix restore means
+      # we always restore the newest cache. Survives ~7 days of no use.
+      - name: Restore seen-post memory
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: seen-${{ github.run_id }}
+          restore-keys: |
+            seen-
+
+      - name: Sweep
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m job_finder --once --quiet --config config.ci.toml
+
+      - name: Save seen-post memory
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: seen-${{ github.run_id }}
+
+      - name: Show what was sent
+        if: always()
+        run: |
+          if [ -f state/matches.jsonl ]; then
+            echo "### Alerts so far" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -20 state/matches.jsonl >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No alerts yet." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # GitHub disables schedules after 60 days without repository activity
+  # (workflow runs do not count — only commits do). This makes a tiny commit
+  # once a month so the schedule keeps firing.
+  keepalive:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Touch .keepalive once a month
+        run: |
+          last=$(cat .keepalive 2>/dev/null || echo "")
+          now=$(date -u +%Y-%m)
+          if [ "$last" != "$now" ]; then
+            echo "$now" > .keepalive
+            git config user.name "job_finder keepalive"
+            git config user.email "actions@users.noreply.github.com"
+            git add .keepalive
+            git commit -m "keepalive $now"
+            git push
+          else
+            echo "already bumped this month"
+          fi

@@ -1,0 +1,99 @@
+# ============================================================================
+#  Reddit job watcher — config for content writing + YouTube strategy roles
+#  Copy to config.toml (git-ignored) and edit. Everything here is optional;
+#  anything you delete falls back to the defaults in job_finder/config.py
+# ============================================================================
+
+[reddit]
+# Boards worth watching. Add/remove freely — r/ prefix is stripped automatically.
+subreddits = [
+  "HireaWriter",          # best signal-to-noise for writing work
+  "forhire",              # highest volume, [Hiring] flair
+  "writersforhire",       # smaller, less competition
+  "freelance_forhire",    # overflow board
+  "CreatorServices",      # where YouTubers actually hire
+  "YouTubeEditorsForHire",# YouTube-specific, portfolio-first
+  "PartneredYoutube",     # creators venting about growth = strategy leads
+  "NewTubers",            # smaller creators, lower budgets
+]
+
+limit = 100                 # posts to pull per subreddit per sweep (max 100)
+max_age_hours = 36          # ignore anything older than this
+request_delay_sec = 2.0     # pause between subreddits, be polite
+poll_interval_sec = 300     # only used by --loop (5 min)
+user_agent = "script:job-finder:v1.0 (personal job watcher)"
+
+[matching]
+# A post must contain at least ONE of these to notify you.
+# Plain text = case-insensitive substring. Prefix with "re:" for a regex.
+include = [
+  "content writ",
+  "copywrit",
+  "content strateg",
+  "youtube strateg",
+  "channel manag",
+  "channel strateg",
+  "video strateg",
+  "scriptwrit",
+  "script writ",
+  "youtube script",
+  "video script",
+  "seo writ",
+  "seo content",
+  "blog post",
+  "ghostwrit",
+  "newsletter",
+  "editorial",
+  "youtube",          # broad on purpose — strategy gigs often just say "YouTube"
+  "faceless channel",
+  "re:content\\s+(creator|specialist|lead)",
+]
+
+# Your two lanes. A hit in the TITLE gets extra weight, so a real strategy or
+# scripting role outranks a generic "YouTube editor wanted" post.
+priority = [
+  "youtube strateg", "channel strateg", "content strateg",
+  "video strateg", "growth", "scriptwrit",
+]
+
+# Extra credit when these appear — pushes the post up the alert order.
+boost = [
+  "strateg", "retention", "thumbnail", "packaging", "ctr",
+  "full-time", "full time", "retainer", "ongoing", "long term",
+  "monthly", "series", "growth", "audit",
+]
+
+# Instant drop if any of these appear anywhere in the post.
+exclude = [
+  "for hire", "revenue share", "rev-share", "equity only", "equity-only",
+  "unpaid", "no pay", "free test", "free sample", "commission only",
+  "re:\\bintern(ship)?s?\\b", "volunteer", "exposure", "college credit",
+  "ai content", "rewrite with ai", "chatgpt", "ai-generated",
+  "student", "entry level", "beginner", "essay", "academic", "thesis",
+  "crypto", "nft", "betting", "casino", "adult", "onlyfans", "gambling",
+]
+
+[floors]
+# Posts whose ONLY stated rates fall below these are dropped as lowballs.
+# Rates are normalised to a single unit before comparison.
+per_word = 0.05       # $/word  (5c/word is the r/HireaWriter entry floor)
+per_hour = 15.0       # $/hour
+per_article = 50.0    # $/article or /post
+per_video = 50.0      # $/video or /short
+
+[storage]
+db_path = "seen.sqlite3"     # dedupe memory; git-ignored
+log_path = "matches.jsonl"   # append-only record of every alert; git-ignored
+bootstrap = true             # on the very first run, mark existing posts as seen
+                             # so you don't get 200 alerts at once
+
+[notify]
+# "auto"  = Telegram when credentials exist, else console  (recommended)
+# "telegram" = always push, "console" = terminal only
+channel = "auto"
+# Leave blank — run `python3 -m job_finder --setup-telegram` and it writes
+# these to a git-ignored .env for you. Env vars also work:
+#   export TELEGRAM_BOT_TOKEN=123456:ABC...
+#   export TELEGRAM_CHAT_ID=987654321
+telegram_token = ""
+telegram_chat_id = ""
