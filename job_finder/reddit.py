@@ -1,12 +1,21 @@
 """Fetch new posts from public subreddit listings.
 
 No OAuth and no API key: we read the same public feeds a logged-out browser
-sees. Reddit aggressively rate-limits and sometimes blocks datacenter IPs, so
-we try three endpoints per subreddit before giving up on it:
+sees. Reddit aggressively rate-limits (403, then 429) and sometimes blocks
+datacenter IPs, so two rules govern everything here:
 
-    1. https://www.reddit.com/r/<sub>/new.json      (richest: flair, scores)
-    2. https://old.reddit.com/r/<sub>/new.json
-    3. https://www.reddit.com/r/<sub>/new.rss       (Atom, still served when JSON is blocked)
+  1. COALESCE. Reddit serves a multi-sub listing at /r/a+b+c/new.json, so all
+     of your boards arrive in ONE request instead of one request per board.
+     Eight boards used to mean up to 24 requests once retries kicked in; that
+     is what tripped the throttle.
+  2. BACK OFF. On 403/429 wait 15s, 30s, 60s (with jitter) before retrying the
+     next endpoint, instead of hammering immediately and digging deeper.
+
+Each batch tries three endpoints before giving up:
+
+    1. https://www.reddit.com/r/<a+b+c>/new.json      (richest: flair, scores)
+    2. https://old.reddit.com/r/<a+b+c>/new.json
+    3. https://www.reddit.com/r/<a+b+c>/new.rss       (Atom, still served when JSON is blocked)
 
 A User-Agent that identifies the tool is required by Reddit and materially
 reduces 403/429 responses.
@@ -15,6 +24,7 @@ reduces 403/429 responses.
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 import urllib.error
@@ -22,12 +32,19 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 ENDPOINTS = (
     "https://www.reddit.com/r/{sub}/new.json?limit={limit}&raw_json=1",
     "https://old.reddit.com/r/{sub}/new.json?limit={limit}&raw_json=1",
     "https://www.reddit.com/r/{sub}/new.rss?limit={limit}",
 )
+
+MULTI_BATCH = 8      # boards per request (Reddit caps a multi-sub at 100)
+LIMIT_MAX = 100      # Reddit caps a listing at 100 posts
+BACKOFF_BASE = 15.0  # seconds; doubled per retry
+BACKOFF_CAP = 90.0
+RETRY_CODES = (403, 429, 500, 502, 503)
 
 
 @dataclass
@@ -175,16 +192,170 @@ def fetch_subreddit(subreddit: str, limit: int, user_agent: str) -> list[Post]:
     return []
 
 
-def fetch_all(subreddits: list[str], limit: int, user_agent: str, delay: float = 2.0) -> list[Post]:
-    """Fetch every subreddit politely, one at a time, with a pause between calls."""
-    out: list[Post] = []
-    for index, sub in enumerate(subreddits):
-        posts = fetch_subreddit(sub, limit, user_agent)
-        print(f"  fetched r/{sub}: {len(posts)} new posts")
-        out.extend(posts)
-        if index < len(subreddits) - 1:
+@dataclass
+class FetchResult:
+    """What a sweep actually managed to read, so silence can be explained."""
+
+    posts: list[Post] = field(default_factory=list)
+    counts: dict[str, int] = field(default_factory=dict)   # board -> posts seen
+    attempted: list[str] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)      # boards that returned nothing
+    requests: int = 0
+
+    @property
+    def boards_ok(self) -> int:
+        return sum(1 for s in self.attempted if self.counts.get(s.lower(), 0) > 0)
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.attempted) and not self.failures
+
+    def summary(self) -> str:
+        line = f"{len(self.posts)} posts from {self.boards_ok}/{len(self.attempted)} boards"
+        if self.failures:
+            line += f" · silent: {', '.join(self.failures)}"
+        return line
+
+
+def _backoff(attempt: int) -> float:
+    """Sleep before the next endpoint attempt. Returns the delay (for tests)."""
+    delay = min(BACKOFF_CAP, BACKOFF_BASE * (2 ** attempt))
+    delay *= 1.0 + random.random() * 0.3  # jitter: retries must not synchronise
+    time.sleep(delay)
+    return delay
+
+
+def batch_urls(group: list[str], limit: int) -> tuple[str, str, str]:
+    """The three endpoint URLs for one batch of boards (multi-sub syntax)."""
+    joined = "+".join(group)
+    return tuple(t.format(sub=joined, limit=limit) for t in ENDPOINTS)  # type: ignore[return-value]
+
+
+def _fetch_batch(group: list[str], limit: int, user_agent: str) -> tuple[list[Post], int, list[str]]:
+    """Fetch one batch, trying each endpoint with backoff. Returns (posts, requests, errors)."""
+    requests_made = 0
+    errors: list[str] = []
+
+    for attempt, url in enumerate(batch_urls(group, limit)):
+        short = url.split("?")[0]
+        requests_made += 1
+        try:
+            payload = _http_get(url, user_agent)
+            if not payload.strip():
+                errors.append(f"{short} -> empty body")
+                continue
+            is_rss = ".rss" in short
+            posts = _parse_rss(payload, "+".join(group)) if is_rss else _parse_json(payload, "+".join(group))
+            if posts:
+                return posts, requests_made, []
+            errors.append(f"{short} -> 0 posts")
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{short} -> HTTP {exc.code}")
+            if exc.code in RETRY_CODES:
+                _backoff(attempt)
+        except Exception as exc:  # noqa: BLE001 - network/parse errors are all non-fatal
+            errors.append(f"{short} -> {type(exc).__name__}: {exc}")
+
+    return [], requests_made, errors
+
+
+def fetch_all(
+    subreddits: list[str],
+    limit: int,
+    user_agent: str,
+    delay: float = 2.0,
+) -> FetchResult:
+    """Read every board in as few requests as possible.
+
+    All boards are requested together (r/a+b+c/new.json), so eight subreddits
+    cost one request instead of eight — the fix for the 403/429 throttle.
+    """
+    subs = [s.strip().removeprefix("r/") for s in subreddits if s and s.strip()]
+    result = FetchResult(attempted=subs)
+    if not subs:
+        return result
+
+    per_call = max(25, min(int(limit), LIMIT_MAX))
+    batches = [subs[i:i + MULTI_BATCH] for i in range(0, len(subs), MULTI_BATCH)]
+
+    for index, group in enumerate(batches, 1):
+        posts, requests_made, errors = _fetch_batch(group, per_call, user_agent)
+        result.requests += requests_made
+        result.posts.extend(posts)
+
+        for post in posts:
+            key = post.subreddit.lower()
+            result.counts[key] = result.counts.get(key, 0) + 1
+
+        seen_here = {p.subreddit.lower() for p in posts}
+        missing = [s for s in group if s.lower() not in seen_here]
+        result.failures.extend(missing)
+
+        label = f"batch {index}/{len(batches)}"
+        if posts:
+            extra = f" · nothing new in: {', '.join(missing)}" if missing else ""
+            print(f"  {label}: {len(posts)} posts{extra}")
+        else:
+            print(f"  {label}: FAILED — {'; '.join(errors) or 'no posts'}")
+
+        if index < len(batches):
             time.sleep(max(0.0, delay))
-    return out
+
+    print(f"  {result.summary()}")
+    return result
+
+
+def health_path(cfg: dict) -> Path:
+    """Where per-board coverage is remembered, next to the dedupe database."""
+    db = Path(cfg.get("storage", {}).get("db_path", "seen.sqlite3"))
+    return db.parent / "fetch_health.json"
+
+
+def write_health(cfg: dict, result: FetchResult) -> None:
+    """Record the last time each board returned posts, so silent boards are visible."""
+    path = health_path(cfg)
+    now = _now()
+    state: dict[str, dict] = {}
+    try:
+        if path.is_file():
+            state = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        state = {}
+
+    for board in result.attempted:
+        key = board.lower()
+        entry = state.get(key, {"last_ok": 0, "misses": 0})
+        if result.counts.get(key, 0) > 0:
+            entry["last_ok"] = now
+            entry["misses"] = 0
+        else:
+            entry["misses"] = int(entry.get("misses", 0)) + 1
+        state[key] = entry
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        print(f"  [warn] could not write fetch health: {exc}")
+
+
+def stale_boards(cfg: dict, hours: float = 12.0) -> list[tuple[str, float]]:
+    """Boards that have not returned posts within `hours`. Returns (board, hours_silent)."""
+    path = health_path(cfg)
+    if not path.is_file():
+        return []
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    now = _now()
+    out = []
+    for board, entry in state.items():
+        last_ok = float(entry.get("last_ok", 0) or 0)
+        silent = (now - last_ok) / 3600 if last_ok else 999.0
+        if silent >= hours:
+            out.append((board, silent))
+    return sorted(out, key=lambda item: -item[1])
 
 
 def load_fixture(path: str, subreddit: str = "fixture", rebase: bool = True) -> list[Post]:

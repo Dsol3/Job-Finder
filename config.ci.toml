@@ -1,6 +1,6 @@
 # Config used by the GitHub Actions runner (and any short-lived container).
 # Differs from config.example.toml in three ways that matter for ephemeral hosts:
-#   * short look-back window, so a cache miss cannot blast you with old posts
+#   * bounded look-back window, so a cache miss cannot blast you with old posts
 #   * state stored under state/ (that's the folder the workflow caches)
 #   * bootstrap off — the cache is the memory, and an empty cache should not
 #     silently swallow the first run
@@ -15,9 +15,9 @@ subreddits = [
   "PartneredYoutube",
   "NewTubers",
 ]
-limit = 50
-max_age_hours = 2          # only posts from the last couple of hours
-request_delay_sec = 2.0
+limit = 100                # one request covers every board (multi-sub listing)
+max_age_hours = 6          # wider window: late cron runs must not miss posts
+request_delay_sec = 1.0    # only matters if >8 boards
 user_agent = "script:job-finder:v1.0 (github actions job watcher)"
 
 [matching]

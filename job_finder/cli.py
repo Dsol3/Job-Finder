@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 
 from . import reddit, telegram
-from .config import load_config
+from .config import ConfigError, load_config
 from .filters import process
 from .notify import Notifier
 from .store import Store
@@ -38,12 +38,15 @@ def sweep(cfg: dict, args, notifier: Notifier, store: Store) -> int:
         else:
             subs = cfg_reddit["subreddits"]
         print(f"[{time.strftime('%H:%M:%S')}] checking {len(subs)} subreddits: {', '.join(subs)}")
-        posts = reddit.fetch_all(
+        result = reddit.fetch_all(
             subs,
             limit=int(cfg_reddit.get("limit", 100)),
             user_agent=cfg_reddit.get("user_agent", "job-finder"),
             delay=float(cfg_reddit.get("request_delay_sec", 2.0)),
         )
+        posts = result.posts
+        if result.attempted:
+            reddit.write_health(cfg, result)
 
     bootstrap = cfg["storage"].get("bootstrap", True) and store.count() == 0
     matches = process(posts, cfg)
@@ -108,12 +111,22 @@ def main(argv: list[str] | None = None) -> int:
             preset_chat=args.chat_id,
         )
 
-    cfg = load_config(args.config)
+    try:
+        cfg = load_config(args.config)
+    except ConfigError as exc:
+        print(f"\n  config problem:\n  {exc}\n", file=sys.stderr)
+        return 2
+
     store = Store(cfg["storage"].get("db_path", "seen.sqlite3"))
     notifier = Notifier(cfg, dry_run=args.dry_run, quiet=args.quiet)
 
     if args.demo:
-        demo_cfg = load_config(args.config)
+        try:
+            demo_cfg = load_config(args.config)
+        except ConfigError as exc:
+            print(f"\n  config problem:\n  {exc}\n", file=sys.stderr)
+            store.close()
+            return 2
         demo_cfg["notify"]["channel"] = "telegram"
         demo_notifier = Notifier(demo_cfg, dry_run=False, quiet=False)
         posts = reddit.load_fixture(str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "forhire_new.json"))
