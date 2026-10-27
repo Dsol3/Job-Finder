@@ -68,7 +68,18 @@ def sweep(cfg: dict, args, notifier: Notifier, store: Store) -> int:
     return len(new)
 
 
+def _utf8_console() -> None:
+    """Windows consoles default to cp1252/cp437, which chokes on ✓ and box drawing
+    when output is redirected to a file. Force UTF-8 and degrade instead of crash."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - not available on every stream type
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_console()
     parser = argparse.ArgumentParser(prog="job_finder", description=f"{BANNER} for Reddit")
     parser.add_argument("--config", default=None, help="path to config.toml")
     parser.add_argument("--once", action="store_true", help="one sweep then exit (default)")

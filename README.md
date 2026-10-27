@@ -30,6 +30,68 @@ On Reddit the first 5 replies get read. A good `[Hiring]` post collects 40–100
 day and the shortlist is built before you wake up. Manually refreshing `/new` doesn't scale,
 so this does the refreshing and the triage, and you do the writing.
 
+## Windows quickstart (no terminal experience needed)
+
+> **Windows gotchas up front:** there is no `python3` command on Windows (that's macOS/Linux —
+> typing it opens the Microsoft Store, which is what the "Python was not found" message means).
+> Use **`py`** or **`python`**. And this repo is private, so `git clone` without signing in will
+> fail with *"Invalid username or token"* — download the ZIP instead.
+
+**1. Install Python**
+
+```powershell
+winget install -e --id Python.Python.3.12
+```
+
+No `winget`? Get it from https://www.python.org/downloads/ and **tick "Add python.exe to PATH"**
+on the first installer screen. Then **close every terminal window** and open a new one (PATH only
+updates for new windows). Check it worked:
+
+```powershell
+py --version        # -> Python 3.12.x
+```
+
+**2. Get the code** (browser, no git needed — you're already signed in to GitHub):
+
+Open https://github.com/Dsol3/Job-Finder → branch dropdown → select
+`arena/7c5b793b-job-finder` → **Code ▾ → Download ZIP** → right-click the downloaded
+file → **Extract All**. You get a folder `Job-Finder-arena-7c5b793b-job-finder`.
+
+```powershell
+cd "$env:USERPROFILE\Downloads\Job-Finder-arena-7c5b793b-job-finder"
+```
+
+*(Prefer git? `winget install --id GitHub.cli`, then `gh auth login` — choose "Login with a web
+browser" — then `gh repo clone Dsol3/Job-Finder` and `git checkout arena/7c5b793b-job-finder`.)*
+
+**3. Run setup — double-click `setup.bat` in that folder**, or from the terminal:
+
+```powershell
+.\setup.bat
+```
+
+It finds Python (ignoring the Store stub), creates `config.toml`, runs the Telegram wizard, then
+runs `--doctor`. Paste the **new** bot token when asked, then tap START on `https://t.me/YourBot`
+when it tells you to.
+
+**4. Start watching — double-click `run-watcher.bat`.** Leave the window open (minimise it).
+
+**Keep it running at logon** (Task Scheduler): Create Task → *Run only when user is logged on* →
+Trigger *At log on* → Action *Start a program* → Program: `C:\path	o
+un-watcher.bat` →
+tick *Start in* and set it to the same folder. Or, simpler, drop a shortcut to `run-watcher.bat`
+into `shell:startup` (Win+R → `shell:startup`).
+
+Troubleshooting the Windows path:
+
+| Message | Fix |
+|---|---|
+| `Python was not found; run without arguments to install...` | You typed `python3`. Install Python (step 1), use `py`. |
+| `'python' is not recognized` | PATH not set, or you didn't open a **new** window after installing. |
+| `Invalid username or token` on clone | Repo is private. Use the ZIP (step 2) or `gh auth login` first. |
+| `setup.bat` flashes and closes instantly | Right-click → *Edit* to check the path, or run it from a terminal to see the error. |
+| Unicode/`UnicodeEncodeError` when redirecting output | Already handled (`PYTHONIOENCODING` is set by the .bat), otherwise `set PYTHONIOENCODING=utf-8`. |
+
 ## Quickstart (5 minutes)
 
 ```bash
@@ -206,6 +268,8 @@ job_finder/
   cli.py        argument parsing, sweep loop, baseline run
 tests/          32 offline tests (fixtures + a local HTTP server for the fetch path)
 deploy/         systemd unit
+setup.bat       Windows one-click setup (finds Python, wizard, doctor)
+run-watcher.bat Windows one-click watcher (leave window open)
 ```
 
 ## Troubleshooting
