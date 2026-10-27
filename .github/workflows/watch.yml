@@ -1,0 +1,55 @@
+# Free, serverless option: GitHub runs the sweep for you every 10 minutes.
+#
+# Requirements:
+#   1. A PUBLIC repo (Actions minutes are unlimited for public repos; private
+#      repos get 2,000 min/month, which a 10-minute schedule would exhaust).
+#   2. Scheduled workflows only fire from the DEFAULT branch, so merge this
+#      into main first.
+#   3. Repo → Settings → Secrets and variables → Actions → add
+#      TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+#
+# Caveats worth knowing: GitHub's cron is best-effort (a "10 minute" schedule
+# often fires 10-25 minutes late), and it disables schedules on repos with no
+# activity for 60 days — the monthly "keepalive" job at the bottom prevents that.
+name: watch
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # keep the dedupe database between runs; longest-prefix restore wins
+      - uses: actions/cache@v4
+        with:
+          path: state
+          key: seen-${{ github.run_id }}
+          restore-keys: |
+            seen-
+
+      - name: Sweep
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m job_finder --once --quiet --config config.ci.toml
+
+  keepalive:
+    # stops GitHub from disabling the schedule after 60 days of no commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - run: echo "alive"

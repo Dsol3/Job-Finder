@@ -1,8 +1,11 @@
 # secrets / local state
 config.toml
 .env
+.env.*
+!.env.example
 seen.sqlite3
 matches.jsonl
+state/
 *.log
 
 # python

@@ -1,0 +1,20 @@
+services:
+  jobfinder:
+    build: .
+    container_name: jobfinder
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:?set TELEGRAM_CHAT_ID in .env}
+    volumes:
+      - jobfinder-data:/app/state
+      # optional: mount your tuned config over the default one
+      # - ./config.toml:/app/config.toml:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  jobfinder-data:

@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 33 offline tests, no network
+python3 -m unittest discover -s tests  # 37 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -166,6 +166,110 @@ Notes:
 - Non-interactive setup for a server: `--setup-telegram --token 123:ABC --chat-id 987654321`.
 - Want a group instead of a DM? Add the bot to the group, send a message there, and the wizard
   will list it as an option.
+
+## Run it off your PC (always-on)
+
+A sleeping laptop misses every post in its window, and on these boards the first hour decides
+everything. Three ways to keep it running, cheapest first.
+
+### Option A — GitHub Actions · free, no server, no card
+
+GitHub's own servers run the sweep every 10 minutes. Nothing to maintain, no credit card.
+
+1. Make the repo **public** (Actions minutes are unlimited for public repos; a private repo's
+   2,000 free minutes/month would be eaten by a 10-minute schedule).
+2. Merge this branch into **`main`** — scheduled workflows only fire from the default branch.
+3. Repo → **Settings → Secrets and variables → Actions → New repository secret**, add
+   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+4. Repo → **Actions** tab → *watch* → **Run workflow** to test, then leave it alone.
+
+The workflow (`.github/workflows/watch.yml`) caches `state/` between runs so you don't get
+duplicates, and `config.ci.toml` limits it to posts from the last 2 hours so a cache miss can
+never blast you with old listings.
+
+**Honest trade-offs:** GitHub's cron is best-effort — a "10-minute" schedule often fires 10–25
+minutes late, so you're fast but not *first*. It also needs a monthly keepalive commit (the
+workflow includes a no-op job, but if the schedule ever stops, push any small commit).
+
+### Option B — a $4–5/month VPS · most reliable
+
+Hetzner CX22 (~€3.79), DigitalOcean (~$4), Vultr, or Lightsail. Pick **Ubuntu 24.04** and the
+smallest size; the watcher uses ~30 MB of RAM.
+
+```bash
+ssh root@YOUR_IP
+apt-get update && apt-get install -y git
+git clone -b arena/7c5b793b-job-finder https://github.com/Dsol3/Job-Finder.git
+cd Job-Finder
+sudo bash deploy/install.sh
+```
+
+`install.sh` installs Python if needed, writes `config.toml`, stores your Telegram credentials
+in `/etc/jobfinder.env` (chmod 600), verifies the bot with a live API call, installs a hardened
+`systemd` unit, enables it at boot, and runs the first sweep. Re-running it is safe.
+
+```bash
+systemctl status jobfinder --no-pager   # is it alive
+journalctl -u jobfinder -f              # live log
+sudo systemctl restart jobfinder        # after editing config.toml
+```
+
+Non-interactive (cloud-init, Ansible, Oracle):
+
+```bash
+sudo TELEGRAM_BOT_TOKEN=123:ABC TELEGRAM_CHAT_ID=456 bash deploy/install.sh
+```
+
+### Option C — Oracle Cloud Always Free · $0, some patience
+
+Oracle's **Always Free** tier includes an ARM Ampere VM (up to 4 cores / 24 GB) that never
+expires. It's the cheapest truly-always-on option, but signup requires a card for verification
+(not charged) and ARM capacity in busy regions can take a few tries.
+
+1. Create an **Always Free** Ampere A1 instance, image **Ubuntu 24.04** (ARM64 is fine).
+2. In the security list, allow outbound (default) — no inbound port needed; it only talks out.
+3. Then the same three commands as Option B.
+
+Watch for Oracle reclaiming *idle* Always Free instances — a small always-on service like this
+one is exactly what keeps it classified as active.
+
+### Option D — Docker, anywhere
+
+```bash
+cp .env.example .env   # TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
+docker compose up -d   # state persists in the jobfinder-data volume
+docker compose logs -f
+```
+
+Works on a NAS, a home server, Railway, or any VPS with Docker.
+
+### Option E — an old Android phone · $0
+
+Install **Termux** (from F-Droid, not the Play Store), then:
+
+```bash
+pkg install python git -y
+git clone -b arena/7c5b793b-job-finder https://github.com/Dsol3/Job-Finder.git
+cd Job-Finder
+python -m job_finder --setup-telegram
+termux-wake-lock     # keeps Android from killing it
+python -m job_finder --loop --quiet
+```
+
+Leave it charging with Wi-Fi on. Ugly, but it's free and it's already in your drawer.
+
+### Which should you pick?
+
+| | Cost | Speed | Effort | Reliability |
+|---|---|---|---|---|
+| GitHub Actions | free | 10–25 min late | 5 min setup | good |
+| $4 VPS | ~$4–5/mo | every 5 min, on time | 10 min setup | best |
+| Oracle Always Free | $0 | every 5 min, on time | 20–40 min setup | good |
+| Old phone | $0 | every 5 min, on time | 10 min setup | depends on the phone |
+
+If you're serious about this for a few months, the $4 VPS pays for itself the first time you
+reply to a post before anyone else. Start with GitHub Actions if you want to test the waters
+for free.
 
 ## Running it 24/7
 
@@ -267,8 +371,11 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          33 offline tests (fixtures + a local HTTP server for the fetch path)
-deploy/         systemd unit
+tests/          37 offline tests (fixtures + a local HTTP server for the fetch path)
+deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
+Dockerfile      container image for Railway/Fly/NAS/any VPS
+docker-compose.yml
+.github/workflows/watch.yml   free serverless option (GitHub Actions)
 setup.bat       Windows one-click setup (finds Python, wizard, doctor)
 run-watcher.bat Windows one-click watcher (leave window open)
 ```

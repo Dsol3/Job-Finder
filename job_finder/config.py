@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 import os
-import tomllib
 from pathlib import Path
+
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 and older (e.g. Ubuntu 22.04)
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:  # pragma: no cover - interpreter dependent
+        tomllib = None  # type: ignore[assignment]
+
+
+class ConfigError(RuntimeError):
+    pass
 
 DEFAULTS = {
     "reddit": {
@@ -89,6 +100,14 @@ def load_config(path: str | Path | None = None) -> dict:
 
     for candidate in candidates:
         if candidate.is_file():
+            if tomllib is None:
+                raise ConfigError(
+                    f"{candidate} exists but this Python cannot read TOML.\n"
+                    f"  Python {os.sys.version_info.major}.{os.sys.version_info.minor} has no tomllib.\n"
+                    "  Fix with either:\n"
+                    "    python3 -m pip install --user tomli\n"
+                    "    or upgrade to Python 3.11+"
+                )
             with candidate.open("rb") as fh:
                 cfg = _merge(cfg, tomllib.load(fh))
             break

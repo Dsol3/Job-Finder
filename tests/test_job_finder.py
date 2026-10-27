@@ -445,3 +445,48 @@ bootstrap = false
             store = Store(Path(tmp) / "seen.sqlite3")
             self.assertEqual(store.count(), 0)  # demo must not pollute dedupe
             store.close()
+
+
+class TestDeploy(unittest.TestCase):
+    def test_ci_config_is_valid_and_isolated(self):
+        import tomllib
+
+        with open(ROOT / "config.ci.toml", "rb") as fh:
+            data = tomllib.load(fh)
+        self.assertTrue(data["storage"]["db_path"].startswith("state/"))
+        self.assertFalse(data["storage"]["bootstrap"])  # cache miss must not swallow posts
+        self.assertLessEqual(data["reddit"]["max_age_hours"], 6)
+        self.assertIn("youtube strateg", data["matching"]["priority"])
+
+    def test_missing_toml_parser_gives_actionable_error(self):
+        from job_finder import config as cfg_mod
+
+        original = cfg_mod.tomllib
+        cfg_mod.tomllib = None
+        try:
+            with self.assertRaises(cfg_mod.ConfigError) as ctx:
+                cfg_mod.load_config(ROOT / "config.example.toml")
+        finally:
+            cfg_mod.tomllib = original
+        self.assertIn("pip install --user tomli", str(ctx.exception))
+
+    def test_install_script_is_syntactically_valid(self):
+        import shutil
+        import subprocess
+
+        script = ROOT / "deploy" / "install.sh"
+        self.assertTrue(script.is_file())
+        text = script.read_text()
+        self.assertIn("systemctl enable --now", text)
+        self.assertIn("chmod 600", text)  # secrets file must not be world-readable
+        self.assertNotIn("REPLACE_ME", text)  # no half-finished placeholders
+        if shutil.which("bash"):
+            proc = subprocess.run(["bash", "-n", str(script)], capture_output=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+
+    def test_dockerfile_and_compose_present(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("/app/state/seen.sqlite3", dockerfile)
+        self.assertIn("PYTHONUNBUFFERED", dockerfile)
+        compose = (ROOT / "docker-compose.yml").read_text()
+        self.assertIn("jobfinder-data", compose)

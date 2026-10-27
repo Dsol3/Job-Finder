@@ -1,0 +1,63 @@
+# Config used by the GitHub Actions runner (and any short-lived container).
+# Differs from config.example.toml in three ways that matter for ephemeral hosts:
+#   * short look-back window, so a cache miss cannot blast you with old posts
+#   * state stored under state/ (that's the folder the workflow caches)
+#   * bootstrap off — the cache is the memory, and an empty cache should not
+#     silently swallow the first run
+[reddit]
+subreddits = [
+  "HireaWriter",
+  "forhire",
+  "writersforhire",
+  "freelance_forhire",
+  "CreatorServices",
+  "YouTubeEditorsForHire",
+  "PartneredYoutube",
+  "NewTubers",
+]
+limit = 50
+max_age_hours = 2          # only posts from the last couple of hours
+request_delay_sec = 2.0
+user_agent = "script:job-finder:v1.0 (github actions job watcher)"
+
+[matching]
+include = [
+  "content writ", "copywrit", "content strateg", "youtube strateg",
+  "channel manag", "channel strateg", "video strateg", "scriptwrit",
+  "script writ", "youtube script", "video script", "seo writ",
+  "seo content", "blog post", "ghostwrit", "newsletter", "editorial",
+  "youtube", "faceless channel", "re:content\\s+(creator|specialist|lead)",
+]
+priority = [
+  "youtube strateg", "channel strateg", "content strateg",
+  "video strateg", "growth", "scriptwrit",
+]
+boost = [
+  "strateg", "retention", "thumbnail", "packaging", "ctr",
+  "full-time", "full time", "retainer", "ongoing", "long term",
+  "monthly", "series", "growth", "audit",
+]
+exclude = [
+  "for hire", "revenue share", "rev-share", "equity only", "equity-only",
+  "unpaid", "no pay", "free test", "free sample", "commission only",
+  "re:\\bintern(ship)?s?\\b", "volunteer", "exposure", "college credit",
+  "ai content", "rewrite with ai", "chatgpt", "ai-generated",
+  "student", "entry level", "beginner", "essay", "academic", "thesis",
+  "crypto", "nft", "betting", "casino", "adult", "onlyfans", "gambling",
+]
+
+[floors]
+per_word = 0.05
+per_hour = 15.0
+per_article = 50.0
+per_video = 50.0
+
+[storage]
+db_path = "state/seen.sqlite3"
+log_path = "state/matches.jsonl"
+bootstrap = false
+
+[notify]
+channel = "auto"
+telegram_token = ""
+telegram_chat_id = ""
