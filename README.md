@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 52 offline tests, no network
+python3 -m unittest discover -s tests  # 62 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -433,7 +433,9 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          52 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          62 offline tests (fixtures + a local HTTP server for the fetch path)
+docs/           reddit-seo-closing-script.md — the closing playbook
+config.leads.toml  second profile: watches for client leads, not job posts
 deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
 Dockerfile      container image for Railway/Fly/NAS/any VPS
 docker-compose.yml
@@ -470,6 +472,27 @@ The tool gets you there first; the reply is still yours. What converts on Reddit
   angle each time; retainers come from inbound, not from replies.
 - **50% upfront** on first projects. Agree payment rails (Wise/Payoneer/Deel) before you
   deliver anything, in writing.
+
+## Two kinds of lead: jobs and clients
+
+This repo watches for **job posts** by default. If you also sell SEO or content services
+yourself, you want a second profile that hunts people *asking for help* — a different keyword
+set on different subreddits.
+
+```bash
+py -m job_finder --config config.leads.toml --dry-run   # what would it ping?
+py -m job_finder --config config.leads.toml --once      # start pinging
+```
+
+`config.leads.toml` matches Stage 1 trigger phrases ("traffic dropped", "not indexed", "is SEO
+worth it", "rank on Google") across r/smallbusiness, r/SEO, r/Entrepreneur, r/startups,
+r/ecommerce, r/juststart, r/shopify and r/bigseo. It drops for-hire ads, other people pitching
+SEO, agency spam and course sellers, and keeps **separate storage** (`leads.sqlite3`,
+`leads.jsonl`) so lead alerts and job alerts never suppress each other.
+
+The closing playbook itself — public comment → DM → discovery → mini-audit → call → quote →
+follow-ups — lives in **[docs/reddit-seo-closing-script.md](docs/reddit-seo-closing-script.md)**,
+including where r/forhire differs and how to keep the account from getting banned.
 
 ## Notes
 
