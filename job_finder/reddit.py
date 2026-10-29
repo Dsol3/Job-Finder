@@ -63,6 +63,7 @@ class Post:
     match_reasons: list[str] = field(default_factory=list)
     budget_text: str = ""
     notify_score: int = 0
+    kind: str = ""          # gig | signal | both — what the post is asking for
 
     @property
     def age_hours(self) -> float:

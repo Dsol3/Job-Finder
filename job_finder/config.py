@@ -101,7 +101,7 @@ def load_config(path: str | Path | None = None) -> dict:
     if path:
         # An explicit --config is a promise: if it is missing or unreadable we
         # must fail loudly. Silently falling back to built-in defaults once hid
-        # a missing config.ci.toml and made the watcher check only 2 boards.
+        # a missing --config file and made the watcher check only 2 boards.
         explicit = Path(path)
         if not explicit.is_file():
             raise ConfigError(

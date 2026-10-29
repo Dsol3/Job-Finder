@@ -9,14 +9,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .filters import human_age
+from .filters import KINDS, human_age
 from .reddit import Post
 
 
 def render(post: Post) -> str:
     """Plain-text version, used for the console and the JSONL log."""
+    badge = KINDS.get(post.kind, "")
     lines = [
-        f"[{post.notify_score}/10] r/{post.subreddit} · {human_age(post.age_hours)} · u/{post.author}",
+        f"[{post.notify_score}/10]{' ' + badge if badge else ''} r/{post.subreddit} · "
+        f"{human_age(post.age_hours)} · u/{post.author}",
         post.title.strip(),
     ]
     if post.budget_text:
@@ -32,9 +34,10 @@ def render_html(post: Post) -> str:
     """Telegram HTML (only <b>, <a>, <i> are allowed)."""
     score = post.notify_score
     flame = "🔥" if score >= 7 else ("✅" if score >= 4 else "•")
+    badge = KINDS.get(post.kind, "")
     head = (
-        f"{flame} <b>{score}/10</b> · r/{html.escape(post.subreddit)} · "
-        f"{human_age(post.age_hours)}"
+        f"{flame} <b>{score}/10</b>{' ' + badge if badge else ''} · "
+        f"r/{html.escape(post.subreddit)} · {human_age(post.age_hours)}"
     )
     parts = [head, f'<a href="{html.escape(post.link)}">{html.escape(post.title.strip())}</a>']
     if post.budget_text:
@@ -123,6 +126,7 @@ class Notifier:
                             "title": post.title,
                             "link": post.link,
                             "budget": post.budget_text,
+                            "kind": post.kind,
                             "score": post.notify_score,
                             "age_hours": round(post.age_hours, 2),
                         }

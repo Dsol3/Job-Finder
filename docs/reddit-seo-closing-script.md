@@ -9,7 +9,7 @@ who replied to a helpful comment. Mass cold DMs get accounts banned and rarely c
 r/startups, r/ecommerce, r/forhire and niche subreddits (dentists, lawyers, Shopify stores). Watch for posts
 like "my traffic dropped," "how do I rank on Google," or "is SEO worth it?"
 
-> **Watching for these automatically:** `config.leads.toml` matches exactly these phrases and pings your
+> **Watching for these automatically:** `config.seo.toml` matches exactly these phrases and pings your
 > Telegram when one appears — see [Finding the leads](#finding-the-leads-automatically) at the bottom.
 > r/forhire is the exception; it does not work this way. See [Where each subreddit differs](#where-each-subreddit-differs).
 
@@ -222,17 +222,23 @@ and a removal is a public signal to every prospect who searches your name.
 The watcher in this repo can hunt these lead posts for you, separately from job posts:
 
 ```bash
-py -m job_finder --config config.leads.toml --dry-run   # see what it would ping
-py -m job_finder --config config.leads.toml --once      # start pinging
+py -m job_finder --config config.seo.toml --dry-run   # see what it would ping
+py -m job_finder --config config.seo.toml --once      # start pinging
 ```
 
-It matches Stage 1 trigger phrases ("traffic dropped", "not indexed", "is seo worth it", "rank on
-google") in r/smallbusiness, r/SEO, r/entrepreneur, r/ecommerce, r/startups, r/Entrepreneur and
-r/smallbusiness-adjacent subs, and drops for-hire ads, other people pitching SEO, and agency spam.
+One profile watches both kinds of post, and labels each alert so you know which stage to open with:
 
-It keeps its own memory (`leads.sqlite3` / `leads.jsonl`), so lead alerts and job alerts never suppress
-each other. To run both profiles on GitHub Actions, add a second workflow pointing at
-`config.leads.toml` — or run the job profile on GitHub and the lead profile on your PC.
+- **💼 GIG** — someone offering to pay for SEO or content work (r/forhire, r/HireaWriter, r/SEO).
+  Reply with a pitch, samples and a rate.
+- **🔎 SIGNAL** — someone describing the problem this script solves ("traffic dropped", "not
+  indexed", "is seo worth it", "rank on google"). Open with the public Stage 1 comment.
+- **💼🔎 GIG + SIGNAL** — they have the problem *and* want to hire. Rarest, highest scoring: one
+  comment can do both jobs.
+
+It watches r/smallbusiness, r/SEO, r/Entrepreneur, r/startups, r/ecommerce, r/shopify, r/forhire and
+r/HireaWriter, and drops for-hire ads, other people pitching SEO, agency spam, backlink/PBN offers
+and course sellers. GitHub Actions runs this profile every few minutes, so the alerts arrive while
+the post still has two comments.
 
 **The tool gets you there while the post has 2 comments. The comment, the audit and the call are still
 yours.**

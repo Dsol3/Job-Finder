@@ -1,0 +1,133 @@
+# ============================================================================
+#  SEO WATCHLIST — the profile GitHub Actions runs, and what you should run too
+#
+#  Watches the SEO communities for TWO things in the same feed:
+#    💼 GIG     someone offering paid SEO / content work   -> reply with a pitch
+#    🔎 SIGNAL  someone describing a problem you fix        -> Stage 1 comment,
+#               then the closing script in docs/reddit-seo-closing-script.md
+#
+#     py -m job_finder --config config.seo.toml --dry-run
+#     py -m job_finder --config config.seo.toml --once
+# ============================================================================
+
+[reddit]
+subreddits = [
+  "smallbusiness",   # best source of "my traffic dropped" — and of real budgets
+  "SEO",             # peers, not buyers: credibility + occasional gigs
+  "Entrepreneur",    # site owners with money, weaker SEO intent
+  "startups",
+  "ecommerce",
+  "shopify",         # product/category page problems
+  "forhire",         # paid SEO gigs are posted here with [Hiring]
+  "HireaWriter",     # SEO content / blog gigs
+  # One request covers up to 8 boards. Add more in the same batch by replacing
+  # an entry rather than growing the list; extras that matter most:
+  #   "juststart", "bigseo", "Wordpress", "digital_marketing", "marketing",
+  #   "lawfirm", "dentistry", "realestate"
+]
+limit = 100                 # posts per request (Reddit caps a listing at 100)
+max_age_hours = 6           # a signal older than this has usually been answered
+request_delay_sec = 1.0     # only matters if you exceed 8 boards
+poll_interval_sec = 600     # every 10 minutes is plenty for both kinds
+user_agent = "script:job-finder:v1.0 (seo watchlist)"
+
+[matching]
+# ---------------------------------------------------------------------------
+#  WHAT A GIG LOOKS LIKE: someone offering to pay for work
+# ---------------------------------------------------------------------------
+gig_terms = [
+  "[hiring]", "[h]",
+  "hiring an seo", "hiring a seo", "hiring seo",
+  "looking for an seo", "looking for a seo", "looking for seo",
+  "need an seo", "need a seo", "need seo help",
+  "seo specialist", "seo consultant", "seo freelancer", "seo expert",
+  "content writer", "copywriter", "link building", "technical seo audit",
+  "paid gig", "paid work", "we are hiring", "i want to hire",
+]
+
+# ---------------------------------------------------------------------------
+#  WHAT A SIGNAL LOOKS LIKE: someone describing a problem, no pitch allowed yet
+#  Phrase these the way a business owner writes, not the way an SEO would.
+# ---------------------------------------------------------------------------
+lead_terms = [
+  "traffic dropped", "traffic drop", "traffic has dropped", "traffic tanked",
+  "lost traffic", "losing traffic", "traffic went down", "traffic is down",
+  "traffic fell", "dropped in traffic", "hit by the update", "core update",
+  "not indexed", "deindex", "pages not indexed", "manual action", "penalty",
+  "rank on google", "ranking on google", "not showing up on google",
+  "not ranking", "can't rank", "cant rank", "struggling to rank",
+  "google search console", "no traffic", "zero traffic",
+  "seo worth it", "is seo dead", "help with seo", "seo help", "need seo",
+  "seo advice", "how do i get found", "get found on google",
+  "appear on google", "rank my website", "google business profile",
+]
+
+# Gate: a post must contain at least one of these to be considered at all.
+# Keep it as the union of the two lists above.
+include = [
+  "[hiring]", "[h]", "hiring an seo", "hiring a seo", "hiring seo",
+  "looking for an seo", "looking for a seo", "looking for seo",
+  "need an seo", "need a seo", "need seo help",
+  "seo specialist", "seo consultant", "seo freelancer", "seo expert",
+  "content writer", "copywriter", "link building", "technical seo audit",
+  "paid gig", "paid work", "we are hiring", "i want to hire",
+
+  "traffic dropped", "traffic drop", "traffic has dropped", "traffic tanked",
+  "lost traffic", "losing traffic", "traffic went down", "traffic is down",
+  "traffic fell", "dropped in traffic", "hit by the update", "core update",
+  "not indexed", "deindex", "pages not indexed", "manual action", "penalty",
+  "rank on google", "ranking on google", "not showing up on google",
+  "not ranking", "can't rank", "cant rank", "struggling to rank",
+  "google search console", "no traffic", "zero traffic",
+  "seo worth it", "is seo dead", "help with seo", "seo help", "need seo",
+  "seo advice", "how do i get found", "get found on google",
+  "appear on google", "rank my website", "google business profile",
+]
+
+# Ordering weight: these are the alerts to open first.
+priority = [
+  "traffic dropped", "lost traffic", "deindex", "not indexed", "manual action",
+  "penalty", "[hiring]", "hiring seo",
+]
+
+# Extra weight in the score when present.
+boost = [
+  "revenue", "customers", "leads", "clients", "sales", "shopify",
+  "ecommerce", "local", "google business profile",
+  "budget", "retainer", "monthly", "ongoing", "long term", "per month",
+]
+
+# Instant drop. NOTE: never put "hiring" here — gigs are half the point now.
+exclude = [
+  # other people selling to you, not asking
+  "for hire", "i do seo", "i offer", "my agency", "we offer",
+  "affordable seo", "cheap seo", "seo expert here", "link in bio",
+  "dm me for rates", "book a call with me",
+  # unpaid / worthless
+  "unpaid", "no pay", "revenue share", "rev-share", "equity only",
+  "equity-only", "free work", "free sample", "commission only",
+  "re:\\bintern(ship)?s?\\b", "volunteer", "exposure", "college credit",
+  # junk
+  "crypto", "nft", "casino", "betting", "gambling", "adult", "onlyfans",
+  "course", "mentorship", "coaching program", "webinar", "masterclass",
+  "backlink package", "guest post service", "pbn", "link farm",
+  "student", "homework", "assignment", "thesis", "essay",
+]
+
+[floors]
+# A gig that only mentions rates below these is a lowball and gets dropped.
+# Signals rarely name a rate, so this only bites on actual gigs.
+per_word = 0.05
+per_hour = 15.0
+per_article = 50.0
+per_video = 50.0
+
+[storage]
+db_path = "state/seo.sqlite3"
+log_path = "state/seo.jsonl"
+bootstrap = false          # alert on the last max_age_hours, do not swallow the first run
+
+[notify]
+channel = "auto"
+telegram_token = ""
+telegram_chat_id = ""

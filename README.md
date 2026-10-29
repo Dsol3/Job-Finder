@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 62 offline tests, no network
+python3 -m unittest discover -s tests  # 71 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -199,8 +199,8 @@ for `*/5` typically fires every 10–20 minutes. That's why the workflow asks fo
 asked for 10–15 minutes of latency, and this lands there.
 
 **State between runs:** `state/` (the dedupe database and alert log) is cached by
-`actions/cache`, so you don't get duplicates. `config.ci.toml` limits it to posts from the last
-2 hours, so even if a cache is evicted you can't be blasted with old listings.
+`actions/cache`, so you don't get duplicates. `config.seo.toml` limits it to posts from the last
+6 hours, so even if a cache is evicted you can't be blasted with old listings.
 
 **Two things to know:**
 
@@ -211,7 +211,7 @@ asked for 10–15 minutes of latency, and this lands there.
   The one thing visible is which jobs matched (titles in the run summary) — if that bothers you,
   delete the "Show what was sent" step.
 
-**Changing keywords later:** edit `config.ci.toml` (not `config.toml` — the runner uses the CI
+**Changing keywords later:** edit `config.seo.toml` (not `config.toml` — the runner uses the SEO
 one), commit, done. No restart needed.
 
 **Cost check:** public repos → free, unlimited. You'll see ~288 runs/day in the Actions tab; that
@@ -433,9 +433,9 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          62 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          71 offline tests (fixtures + a local HTTP server for the fetch path)
 docs/           reddit-seo-closing-script.md — the closing playbook
-config.leads.toml  second profile: watches for client leads, not job posts
+config.seo.toml    the live profile: SEO gigs + signals on SEO boards
 deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
 Dockerfile      container image for Railway/Fly/NAS/any VPS
 docker-compose.yml
@@ -473,26 +473,45 @@ The tool gets you there first; the reply is still yours. What converts on Reddit
 - **50% upfront** on first projects. Agree payment rails (Wise/Payoneer/Deel) before you
   deliver anything, in writing.
 
-## Two kinds of lead: jobs and clients
+## What it watches now: SEO gigs and SEO signals
 
-This repo watches for **job posts** by default. If you also sell SEO or content services
-yourself, you want a second profile that hunts people *asking for help* — a different keyword
-set on different subreddits.
+The default profile (`config.seo.toml`) watches the SEO communities for **two kinds of post at
+once**, and labels every alert so you know which playbook to open:
+
+| Badge | What it is | What you do |
+|---|---|---|
+| 💼 **GIG** | Someone offering to pay for SEO or content work | Reply with a pitch, 2 samples, a rate |
+| 🔎 **SIGNAL** | Someone describing a problem you fix ("traffic dropped", "not indexed") | Stage 1 public comment, no pitch |
+| 💼🔎 **GIG + SIGNAL** | They have the problem *and* want to hire | One comment does both jobs — scores highest |
+
+**Boards:** r/smallbusiness, r/SEO, r/Entrepreneur, r/startups, r/ecommerce, r/shopify, r/forhire,
+r/HireaWriter (`config.seo.toml` also lists swap-in candidates: r/juststart, r/bigseo, r/marketing,
+r/lawfirm, r/dentistry).
+
+**Dropped automatically:** for-hire ads, other people pitching SEO, agency spam, backlink/PBN
+offers, course sellers, unpaid/rev-share offers, and gigs whose only stated rate is below your floor.
 
 ```bash
-py -m job_finder --config config.leads.toml --dry-run   # what would it ping?
-py -m job_finder --config config.leads.toml --once      # start pinging
+py -m job_finder --config config.seo.toml --dry-run   # what would it ping right now?
+py -m job_finder --config config.seo.toml --once      # start pinging
 ```
 
-`config.leads.toml` matches Stage 1 trigger phrases ("traffic dropped", "not indexed", "is SEO
-worth it", "rank on Google") across r/smallbusiness, r/SEO, r/Entrepreneur, r/startups,
-r/ecommerce, r/juststart, r/shopify and r/bigseo. It drops for-hire ads, other people pitching
-SEO, agency spam and course sellers, and keeps **separate storage** (`leads.sqlite3`,
-`leads.jsonl`) so lead alerts and job alerts never suppress each other.
+GitHub Actions runs this profile every few minutes, so alerts arrive while the post still has two
+comments.
 
-The closing playbook itself — public comment → DM → discovery → mini-audit → call → quote →
-follow-ups — lives in **[docs/reddit-seo-closing-script.md](docs/reddit-seo-closing-script.md)**,
-including where r/forhire differs and how to keep the account from getting banned.
+The closing playbook — public comment → DM → discovery → mini-audit → call → quote → follow-ups —
+lives in **[docs/reddit-seo-closing-script.md](docs/reddit-seo-closing-script.md)**, including where
+r/forhire differs and how to keep the account from getting banned.
+
+### Watching content/YouTube jobs too
+
+The original watchlist still exists as `config.example.toml` (writing and YouTube strategy roles on
+r/HireaWriter, r/forhire, r/CreatorServices, r/YouTubeEditorsForHire, r/PartneredYoutube…). Run it
+with a separate state file so the two never suppress each other:
+
+```bash
+py -m job_finder --config config.example.toml --dry-run
+```
 
 ## Notes
 
