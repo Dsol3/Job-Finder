@@ -16,6 +16,41 @@ from .reddit import Post
 # Posts where somebody is selling their own services, never a job for you.
 ALWAYS_EXCLUDE = ("[for hire]", "[forhire]", "for hire -")
 
+# What a post wants from you. Shown in the alert so a client enquiry and a
+# paid gig never get confused when both arrive in the same feed.
+KINDS = {
+    "gig": "💼 GIG",
+    "signal": "🔎 SIGNAL",
+    "both": "💼🔎 GIG + SIGNAL",
+    "other": "",
+}
+
+_GIG_MARKERS = ("[hiring]", "[h]", "hiring", "looking for", "need someone",
+                "paying", "budget", "per hour", "retainer", "rate")
+
+
+def classify(post: Post, cfg: dict) -> str:
+    """Is this someone offering work (gig) or someone with a problem (signal)?"""
+    matching = cfg.get("matching", {})
+    text = f"{post.title}\n{post.body}\n{post.flair}".lower()
+    title = post.title.lower()
+
+    gig_terms = matching.get("gig_terms", [])
+    lead_terms = matching.get("lead_terms", [])
+
+    if gig_terms or lead_terms:
+        is_gig = bool(_term_hits(text, gig_terms))
+        is_signal = bool(_term_hits(text, lead_terms))
+    else:  # no explicit split configured: fall back to coarse markers
+        is_gig = any(marker in title for marker in _GIG_MARKERS)
+        is_signal = not is_gig
+
+    if is_gig and is_signal:
+        return "both"
+    if is_gig:
+        return "gig"
+    return "signal" if is_signal else "other"
+
 
 @dataclass
 class Budget:
@@ -142,7 +177,11 @@ def match(post: Post, cfg: dict) -> tuple[bool, list[str]]:
     if exclude_hits:
         return False, [f"excluded: {h}" for h in exclude_hits[:3]]
 
-    include = cfg["matching"].get("include", [])
+    include = list(cfg["matching"].get("include", []))
+    if not include:  # treat gig/lead term lists as the include list when alone
+        include = list(cfg["matching"].get("gig_terms", [])) + list(
+            cfg["matching"].get("lead_terms", [])
+        )
     hits = _term_hits(text, include)
     if include and not hits:
         return False, []
@@ -153,8 +192,12 @@ def match(post: Post, cfg: dict) -> tuple[bool, list[str]]:
         return False, [f"below rate floor: {format_rate(cheapest)}"]
 
     post.budget_text = budget_summary(budgets)
+    post.kind = classify(post, cfg)
 
-    reasons = [f"matched: {', '.join(dict.fromkeys(hits))}"] if hits else ["all posts"]
+    reasons = []
+    if post.kind and post.kind != "other":
+        reasons.append(f"kind: {post.kind}")
+    reasons.append(f"matched: {', '.join(dict.fromkeys(hits))}" if hits else "all posts")
     if post.budget_text:
         reasons.append(f"budget: {post.budget_text}")
     return True, reasons
@@ -182,6 +225,12 @@ def score(post: Post, cfg: dict) -> int:
     elif post.age_hours <= 6:
         total += 1
     total += min(len(_term_hits(f"{post.title}\n{post.body}", matching.get("boost", []))), 2)
+    if post.kind in ("gig", "both") and budgets:
+        total += 0  # already counted by the budget bonus above
+    elif post.kind == "signal":
+        total += 1  # a fresh problem with no competitor in the thread yet
+    if post.kind == "both":
+        total += 1  # they are hiring AND have the problem: answer once, win twice
     if post.num_comments > 25:
         total -= 1  # crowded: everyone already replied
     if not post.body.strip():

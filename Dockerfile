@@ -8,11 +8,12 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY job_finder/ ./job_finder/
 COPY config.example.toml ./config.example.toml
+COPY config.seo.toml ./config.seo.toml
 COPY tests/fixtures/forhire_new.json ./tests/fixtures/forhire_new.json
 
 # state lives on a volume so the dedupe memory survives restarts
-RUN mkdir -p /app/state && cp config.example.toml config.toml \
-    && sed -i 's#db_path = "seen.sqlite3"#db_path = "/app/state/seen.sqlite3"#; s#log_path = "matches.jsonl"#log_path = "/app/state/matches.jsonl"#' config.toml
+# the SEO watchlist already stores state under state/ (mounted as a volume)
+RUN mkdir -p /app/state && cp config.seo.toml config.toml
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8
