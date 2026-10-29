@@ -720,3 +720,88 @@ class TestConfigErrors(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("config problem", err.getvalue())
         self.assertNotIn("Traceback", err.getvalue())
+
+
+class TestLeadsProfile(unittest.TestCase):
+    """config.leads.toml hunts people asking for help, not people hiring."""
+
+    def setUp(self):
+        from job_finder.reddit import Post
+        import time as _time
+
+        self.cfg = load_config(ROOT / "config.leads.toml")
+        self.now = _time.time()
+
+        def post(title, body, board="smallbusiness", age_h=1.0):
+            return Post(id=f"t{abs(hash(title)) % 9999}", subreddit=board, title=title,
+                        body=body, author="op", url="u", permalink="/p",
+                        created_utc=self.now - age_h * 3600)
+
+        self.post = post
+
+    def test_uses_its_own_storage(self):
+        self.assertEqual(self.cfg["storage"]["db_path"], "leads.sqlite3")
+        self.assertNotEqual(self.cfg["storage"]["db_path"], "seen.sqlite3")
+
+    def test_watches_lead_subs_not_job_boards(self):
+        subs = self.cfg["reddit"]["subreddits"]
+        self.assertIn("smallbusiness", subs)
+        self.assertIn("SEO", subs)
+        for job_board in ("HireaWriter", "YouTubeEditorsForHire"):
+            self.assertNotIn(job_board, subs)
+
+    def test_real_lead_post_matches(self):
+        post = self.post(
+            "My organic traffic dropped 60% after the September update",
+            "Was doing 12k sessions a month, now 4k. No manual action in Search Console. "
+            "I run a Shopify store doing $30k/month, this is costing me real sales.",
+        )
+        ok, reasons = match(post, self.cfg)
+        self.assertTrue(ok, reasons)
+
+    def test_beginner_question_matches(self):
+        post = self.post("How do I rank on Google for a local service business?",
+                         "Small law firm, no idea where to start. Is SEO worth it for us?")
+        self.assertTrue(match(post, self.cfg)[0])
+
+    def test_named_rate_floor_respected(self):
+        post = self.post("My traffic dropped, need SEO help",
+                         "Willing to pay $0.01/word for content to fix this.")
+        ok, reasons = match(post, self.cfg)
+        self.assertFalse(ok)
+        self.assertTrue(any("floor" in r for r in reasons), reasons)
+
+    def test_other_people_selling_are_dropped(self):
+        for title, body in [
+            ("I do SEO for local businesses", "Affordable SEO services, DM me for rates."),
+            ("My agency is offering SEO packages", "Cheap SEO, link in bio."),
+            ("Backlink package available", "Guest post service, PBN free."),
+        ]:
+            self.assertFalse(match(self.post(title, body), self.cfg)[0], title)
+
+    def test_hiring_posts_belong_to_the_other_profile(self):
+        post = self.post("[Hiring] SEO specialist for my store",
+                         "Paying monthly, need someone to fix indexing.")
+        self.assertFalse(match(post, self.cfg)[0])
+
+    def test_unrelated_post_dropped(self):
+        post = self.post("What's the best POS system for a coffee shop?",
+                         "Looking for something cheap with inventory tracking.")
+        self.assertFalse(match(post, self.cfg)[0])
+
+    def test_priority_puts_crisis_posts_first(self):
+        ranked = process([
+            self.post("Is SEO worth it in 2026?", "Thinking about it, small budget.", age_h=3),
+            self.post("Traffic dropped to zero after deindexing", "Site got hit hard.", age_h=3),
+        ], self.cfg)
+        self.assertIn("deindex", ranked[0].title.lower())
+
+    def test_doc_exists_and_covers_every_stage(self):
+        doc = (ROOT / "docs" / "reddit-seo-closing-script.md").read_text()
+        for stage in ("Stage 1", "Stage 2", "Stage 3", "Stage 4",
+                      "Stage 5:", "Stage 5.5", "Stage 6"):
+            self.assertIn(stage, doc)
+        self.assertIn("reply to schedule", doc.lower())      # no booking link by request
+        self.assertIn("config.leads.toml", doc)              # connects doc to tooling
+        self.assertIn("r/forhire", doc)
+        self.assertIn("Never guarantee rankings", doc)

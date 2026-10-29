@@ -24,3 +24,5 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+leads.sqlite3
+leads.jsonl
