@@ -122,6 +122,12 @@ per_hour = 15.0
 per_article = 50.0
 per_video = 50.0
 
+[practice]
+# Your own site. `--site` with no argument audits this one, so the practice
+# loop is one command:  py -m job_finder --config config.seo.toml --site
+site = "https://www.ekis.store"
+note = "own store, digital products — practice ground and portfolio case study"
+
 [storage]
 db_path = "state/seo.sqlite3"
 log_path = "state/seo.jsonl"
