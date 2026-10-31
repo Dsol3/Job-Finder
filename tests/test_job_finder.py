@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from job_finder import cli, reddit, telegram  # noqa: E402
+from job_finder import cli, reddit, site, telegram  # noqa: E402
 from job_finder.config import load_config  # noqa: E402
 from job_finder.filters import match, parse_budgets, process, score  # noqa: E402
 from job_finder.store import Store  # noqa: E402
@@ -1389,3 +1389,300 @@ class TestClosingDoc(unittest.TestCase):
         self.assertIn("Never guarantee rankings", doc)
         self.assertIn("config.seo.toml", doc)             # points at the live profile
         self.assertNotIn("config.leads.toml", doc)        # consolidated away
+
+
+SITEMAP_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://shop.test/</loc><lastmod>2026-10-14T20:13:58Z</lastmod>
+       <priority>0.8</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://shop.test/digital</loc><lastmod>2026-10-14T20:13:58Z</lastmod>
+       <priority>0.8</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://shop.test/digital/kits/guide</loc><lastmod>2026-10-14T20:13:58Z</lastmod>
+       <priority>0.8</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://shop.test/hidden</loc><lastmod>2026-10-14T20:13:58Z</lastmod></url>
+</urlset>
+"""
+
+HOME_HTML = """<html><head>
+<title>Practical tools for learning, creating and building online</title>
+<meta name="description" content="Digital guides, useful templates and simple systems to help you put your skills to work.">
+<link rel="canonical" href="https://shop.test/">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Shop"}</script>
+</head><body><h1>Practical tools</h1>
+<p>""" + ("word " * 350) + """</p>
+<a href="/digital">Browse</a><a href="/digital/kits/guide">Kit</a>
+</body></html>"""
+
+DUPLICATE_HTML = """<html><head>
+<title>Practical tools for learning, creating and building online</title>
+<meta name="description" content="Digital guides, useful templates and simple systems to help you put your skills to work.">
+</head><body><h1>Digital Skills Hub</h1><h1>Second heading</h1>
+<p>short page.</p><a href="/">Home</a></body></html>"""
+
+KIT_HTML = """<html><head>
+<title>Social Content System — a repeatable content kit for creators</title>
+<meta name="description" content="Turn a free planner into a repeatable system for deciding what to publish, making it, repurposing it and reviewing results.">
+</head><body><h1>Social Content System</h1>
+<p>""" + ("word " * 320) + """</p><a href="/digital">Back</a></body></html>"""
+
+HIDDEN_HTML = """<html><head><title>Hidden page nobody should rank</title>
+<meta name="robots" content="noindex, follow">
+<meta name="description" content="This page is deliberately excluded from the index and should be reported as a problem.">
+</head><body><h1>Hidden</h1>""" + ("<p>word word word</p>" * 5) + """</body></html>"""
+
+
+class TestSiteAudit(unittest.TestCase):
+    """--site against a local server: discovery, extraction, findings, report."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        cls.requests: list[str] = []
+        static = {
+            "/": ("text/html", HOME_HTML),
+            "/digital": ("text/html", DUPLICATE_HTML),
+            "/digital/kits/guide": ("text/html", KIT_HTML),
+            "/hidden": ("text/html", HIDDEN_HTML),
+        }
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                cls.requests.append(self.path)
+                if self.path == "/robots.txt":
+                    raw = f"User-Agent: *\nAllow: /\n\nSitemap: {cls.base}/sitemap.xml\n".encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                if self.path == "/sitemap.xml":
+                    raw = SITEMAP_XML.replace("https://shop.test", cls.base).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/xml")
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    return
+                route = static.get(self.path)
+                if not route:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                ctype, body = route
+                raw = body.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *args):
+                pass
+
+        cls.server = HTTPServer(("127.0.0.1", 0), Handler)
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def _sitemap(self):
+        # the fixture sitemap points at shop.test; rewrite to the live port
+        body = SITEMAP_XML.replace("https://shop.test", self.base).encode()
+        return body
+
+    # -- parsing ---------------------------------------------------------
+    def test_parse_urlset(self):
+        urls, lastmods, children = site.parse_sitemap(SITEMAP_XML)
+        self.assertEqual(len(urls), 4)
+        self.assertEqual(children, [])
+        self.assertIn("https://shop.test/digital", lastmods)
+
+    def test_parse_sitemap_index(self):
+        index = b"""<sitemapindex><sitemap><loc>https://x.test/a.xml</loc></sitemap>
+                    <sitemap><loc>https://x.test/b.xml</loc></sitemap></sitemapindex>"""
+        urls, _, children = site.parse_sitemap(index)
+        self.assertEqual(urls, [])
+        self.assertEqual(children, ["https://x.test/a.xml", "https://x.test/b.xml"])
+
+    def test_extract_reads_the_basics(self):
+        page = site.extract(KIT_HTML, "https://shop.test/digital/kits/guide")
+        self.assertIn("Social Content System", page.title)
+        self.assertTrue(page.description.startswith("Turn a free planner"))
+        self.assertEqual(page.h1, ["Social Content System"])
+        self.assertGreater(page.words, 300)
+        self.assertFalse(page.noindex)
+        self.assertEqual(page.internal_links, 1)
+
+    def test_extract_spots_noindex_and_canonical(self):
+        page = site.extract(HIDDEN_HTML, "https://shop.test/hidden")
+        self.assertTrue(page.noindex)
+        home = site.extract(HOME_HTML, "https://shop.test/")
+        self.assertEqual(home.canonical, "https://shop.test/")
+        self.assertIn("WebSite", home.schema_types)
+
+    def test_malformed_jsonld_does_not_crash(self):
+        html = ('<html><head><title>t</title><script type="application/ld+json">'
+                '{"@type":"Product","offers":}</script></head><body><h1>h</h1>x</body></html>')
+        page = site.extract(html, "https://shop.test/p")
+        self.assertIn("Product", page.schema_types)
+
+    # -- discovery -------------------------------------------------------
+    def test_discover_follows_robots_then_sitemap(self):
+        urls, lastmods, meta = site.discover(self.base, "unittest", out=lambda *_: None)
+        self.assertEqual(len(urls), 4)
+        self.assertTrue(all(u.startswith(self.base) for u in urls), urls)
+        self.assertEqual(meta["priority_tags"], 3)
+        self.assertEqual(meta["changefreq_tags"], 3)
+        self.assertTrue(meta["sitemaps"])
+
+    # -- findings --------------------------------------------------------
+    def test_findings_cover_the_real_problems(self):
+        lastmods = {f"{self.base}/": "2026-10-14T20:13:58Z",
+                    f"{self.base}/digital": "2026-10-14T20:13:58Z",
+                    f"{self.base}/digital/kits/guide": "2026-10-14T20:13:58Z",
+                    f"{self.base}/hidden": "2026-10-14T20:13:58Z"}
+        pages = [
+            site.extract(HOME_HTML, f"{self.base}/"),
+            site.extract(DUPLICATE_HTML, f"{self.base}/digital"),
+            site.extract(KIT_HTML, f"{self.base}/digital/kits/guide"),
+            site.extract(HIDDEN_HTML, f"{self.base}/hidden"),
+        ]
+        for page in pages:
+            page.lastmod = lastmods[page.url]
+        findings = site.analyse(pages, {"priority_tags": 3, "changefreq_tags": 3})
+        issues = {(f.issue, f.page) for f in findings}
+
+        self.assertIn(("noindex", f"{self.base}/hidden"), issues)
+        self.assertTrue(any("duplicate title" in f.issue for f in findings))
+        self.assertTrue(any("duplicate description" in f.issue for f in findings))
+        self.assertTrue(any("H1 tags" in f.issue and f.page == f"{self.base}/digital"
+                            for f in findings))
+        self.assertTrue(any("thin content" in f.issue and f.page == f"{self.base}/digital"
+                            for f in findings))
+        self.assertTrue(any("structured data" in f.issue and "kits" in f.page
+                            for f in findings))          # product page with no schema
+        self.assertTrue(any("lastmod" in f.issue for f in findings))
+        self.assertTrue(any("priority" in f.issue for f in findings))
+        self.assertEqual(findings[0].severity, "high")     # sorted by severity
+
+    def test_report_is_markdown_and_lists_every_page(self):
+        pages = [site.extract(HOME_HTML, f"{self.base}/"),
+                 site.extract(HIDDEN_HTML, f"{self.base}/hidden")]
+        findings = site.analyse(pages, {})
+        report = site.render_report(self.base, pages, findings, {})
+        self.assertIn("# On-page audit", report)
+        self.assertIn("| page | status | words |", report)
+        self.assertIn("`/hidden`", report)
+        self.assertIn("Fix these first", report)
+
+    # -- end to end ------------------------------------------------------
+    def test_run_writes_the_report_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = Path(tmp) / "audit.md"
+            original = site._get
+
+            def routed(url, user_agent, timeout=20):
+                # fixture sitemap mentions shop.test: serve it with rewritten hosts
+                path = "/" + url.split("//", 1)[-1].split("/", 1)[-1] if "//" in url else url
+                mapping = {"/robots.txt": ("text/plain", "Sitemap: https://shop.test/sitemap.xml\n"),
+                           "/sitemap.xml": ("application/xml", SITEMAP_XML),
+                           "/": ("text/html", HOME_HTML),
+                           "/digital": ("text/html", DUPLICATE_HTML),
+                           "/digital/kits/guide": ("text/html", KIT_HTML),
+                           "/hidden": ("text/html", HIDDEN_HTML)}
+                hit = mapping.get(path)
+                if not hit:
+                    return 404, b""
+                return 200, hit[1].encode()
+
+            site._get = routed
+            try:
+                lines: list[str] = []
+                code = site.run("https://shop.test", limit=10, delay=0,
+                                report_path=str(out_path), out=lines.append)
+            finally:
+                site._get = original
+
+            self.assertEqual(code, 0, "\n".join(lines))
+            self.assertTrue(out_path.is_file())
+            text = out_path.read_text()
+            self.assertIn("noindex", text)
+            self.assertIn("duplicate title", text)
+            self.assertTrue(any("HIGH" in line for line in lines))
+
+    def test_run_returns_1_when_no_sitemap(self):
+        original = site._get
+        site._get = lambda *a, **k: (404, b"")
+        try:
+            code = site.run("https://nothing.test", out=lambda *_: None)
+        finally:
+            site._get = original
+        self.assertEqual(code, 1)
+
+
+class TestPracticeSite(unittest.TestCase):
+    def test_practice_site_configured(self):
+        cfg = load_config(ROOT / "config.seo.toml")
+        self.assertEqual(cfg["practice"]["site"], "https://www.ekis.store")
+
+    def test_site_flag_without_url_uses_practice_site(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(["--config", str(ROOT / "config.seo.toml"), "--site"])
+            # no network here, so the audit fails — but it must fail having
+            # resolved the configured site, not having crashed on argparse
+            self.assertIn("ekis.store", out.getvalue())
+            self.assertEqual(code, 1)
+
+    def test_site_flag_without_config_site_errors_cleanly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.toml"
+            cfg_path.write_text('[practice]\nsite = ""\n')
+            out = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(["--config", str(cfg_path), "--site"])
+            self.assertEqual(code, 2)
+            self.assertIn("[practice].site is empty", err.getvalue())
+
+    def test_practice_plan_doc_is_complete(self):
+        doc = (ROOT / "docs" / "seo-practice-plan.md").read_text()
+        for heading in ("## Step 1 — Baseline", "## Step 2 — Keyword map",
+                        "## Step 3 — Findings so far", "## Step 4 — The 30-day plan",
+                        "## Step 5 — Turn it into a portfolio case study", "## Redirect log"):
+            self.assertIn(heading, doc)
+        self.assertIn("ekis.store", doc)
+        self.assertIn("What didn't work", doc)      # the honesty section
+        self.assertIn("my own store", doc)          # framing rule
+        self.assertIn("--site", doc)                # ties to the tool
+
+
+class TestEkisCorrections(unittest.TestCase):
+    def test_doc_is_complete_and_actionable(self):
+        doc = (ROOT / "docs" / "ekis-seo-corrections.md").read_text()
+        for heading in ("Part 0", "Part 1", "Part 2", "Part 3", "Part 4",
+                        "Part 5", "Part 6", "Part 7", "Part 8", "Part 9", "Part 10"):
+            self.assertIn(heading, doc)
+        self.assertIn("ekis.store", doc)
+        self.assertIn("lastmod", doc)                 # sitemap fix
+        self.assertIn("FAQPage", doc)                 # schema
+        self.assertIn("BreadcrumbList", doc)
+        self.assertIn("PreOrder", doc)                # never claim InStock when checkout is off
+        self.assertIn("This week", doc)               # ordered next steps
+        self.assertIn("400–600 words", doc)           # the single highest-impact fix
+
+    def test_every_stage_has_a_priority(self):
+        doc = (ROOT / "docs" / "ekis-seo-corrections.md").read_text()
+        for priority in ("**P0**", "**P1**", "**P2**"):
+            self.assertIn(priority, doc)
+
+    def test_practice_doc_links_to_corrections(self):
+        practice = (ROOT / "docs" / "seo-practice-plan.md").read_text()
+        self.assertIn("ekis-seo-corrections.md", practice)

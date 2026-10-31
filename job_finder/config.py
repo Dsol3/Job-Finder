@@ -60,6 +60,8 @@ DEFAULTS = {
         "per_article": 50.0,
         "per_video": 50.0,
     },
+    # Your own site: `--site` with no argument audits whatever is set here.
+    "practice": {"site": ""},
     "storage": {"db_path": "seen.sqlite3", "bootstrap": True},
     # "auto" = Telegram when credentials exist, otherwise console.
     "notify": {"channel": "auto", "telegram_token": "", "telegram_chat_id": ""},
