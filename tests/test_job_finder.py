@@ -1662,3 +1662,27 @@ class TestPracticeSite(unittest.TestCase):
         self.assertIn("What didn't work", doc)      # the honesty section
         self.assertIn("my own store", doc)          # framing rule
         self.assertIn("--site", doc)                # ties to the tool
+
+
+class TestEkisCorrections(unittest.TestCase):
+    def test_doc_is_complete_and_actionable(self):
+        doc = (ROOT / "docs" / "ekis-seo-corrections.md").read_text()
+        for heading in ("Part 0", "Part 1", "Part 2", "Part 3", "Part 4",
+                        "Part 5", "Part 6", "Part 7", "Part 8", "Part 9", "Part 10"):
+            self.assertIn(heading, doc)
+        self.assertIn("ekis.store", doc)
+        self.assertIn("lastmod", doc)                 # sitemap fix
+        self.assertIn("FAQPage", doc)                 # schema
+        self.assertIn("BreadcrumbList", doc)
+        self.assertIn("PreOrder", doc)                # never claim InStock when checkout is off
+        self.assertIn("This week", doc)               # ordered next steps
+        self.assertIn("400–600 words", doc)           # the single highest-impact fix
+
+    def test_every_stage_has_a_priority(self):
+        doc = (ROOT / "docs" / "ekis-seo-corrections.md").read_text()
+        for priority in ("**P0**", "**P1**", "**P2**"):
+            self.assertIn(priority, doc)
+
+    def test_practice_doc_links_to_corrections(self):
+        practice = (ROOT / "docs" / "seo-practice-plan.md").read_text()
+        self.assertIn("ekis-seo-corrections.md", practice)

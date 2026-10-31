@@ -117,6 +117,9 @@ Search Console, meta tags, schema or speed). Verify each before acting.
 | 6 | Mixed URL conventions (`/digital/kits/x` vs `/playbooks/x`) | Pick one, 301 the rest — only after logging them | Redirect log below |
 | 7 | Sitemap uses `priority`/`changefreq` (ignored) and one shared `lastmod` for all URLs | Strip priority/changefreq; emit real per-page lastmod | Screaming Frog / this tool |
 
+> The full prioritised fix list — every correction, with draft titles, schema snippets and an
+> ordered checklist — is in **[ekis-seo-corrections.md](ekis-seo-corrections.md)**.
+
 ### Run the audit yourself
 
 ```bash
