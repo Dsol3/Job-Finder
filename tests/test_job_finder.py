@@ -1686,3 +1686,34 @@ class TestEkisCorrections(unittest.TestCase):
     def test_practice_doc_links_to_corrections(self):
         practice = (ROOT / "docs" / "seo-practice-plan.md").read_text()
         self.assertIn("ekis-seo-corrections.md", practice)
+
+
+class TestHandoffDoc(unittest.TestCase):
+    """The handoff doc is meant to be read by someone else — keep it honest."""
+
+    def setUp(self):
+        self.doc = (ROOT / "docs" / "telegram-alert-bot-handoff.md").read_text()
+
+    def test_covers_setup_end_to_end(self):
+        for step in ("@BotFather", "getUpdates", "sendMessage", "START"):
+            self.assertIn(step, self.doc)
+        self.assertIn("parse_mode", self.doc)
+
+    def test_documents_the_traps_that_cost_time(self):
+        for trap in ("409", "429", "retry_after", "html.escape", "Alert fatigue"):
+            self.assertIn(trap, self.doc)
+        self.assertIn("chat not found", self.doc)
+        self.assertIn("hard error", self.doc)      # silent config fallback
+
+    def test_warns_about_secrets(self):
+        self.assertIn("never in code", self.doc)
+        self.assertIn("Revoke", self.doc)
+
+    def test_links_the_real_files(self):
+        for ref in ("telegram.py", "notify.py", "reddit.py", "filters.py", "store.py"):
+            self.assertIn(ref, self.doc)
+
+    def test_states_the_scheduling_reality(self):
+        self.assertIn("best-effort", self.doc)
+        self.assertIn("default branch", self.doc)
+        self.assertIn("60 days", self.doc)

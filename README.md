@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 81 offline tests, no network
+python3 -m unittest discover -s tests  # 93 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -436,8 +436,9 @@ job_finder/
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          81 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          93 offline tests (fixtures + a local HTTP server for the fetch path)
 docs/           reddit-seo-closing-script.md — the closing playbook
+                telegram-alert-bot-handoff.md — hand this to anyone who wants one
                 seo-practice-plan.md — 90-day plan on your own store
 config.seo.toml    the live profile: SEO gigs + signals on SEO boards
 deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
