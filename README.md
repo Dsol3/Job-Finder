@@ -97,7 +97,7 @@ Troubleshooting the Windows path:
 ```bash
 git clone <this repo> && cd Job-Finder
 cp config.example.toml config.toml     # edit the subreddit + keyword lists if you like
-python3 -m unittest discover -s tests  # 71 offline tests, no network
+python3 -m unittest discover -s tests  # 93 offline tests, no network
 python3 -m job_finder --fixture tests/fixtures/forhire_new.json --dry-run   # see it work offline
 python3 -m job_finder --once           # first real run
 ```
@@ -418,6 +418,8 @@ subreddits = ["HireaWriter", "forhire", "CreatorServices", "PartneredYoutube", "
 | `python3 -m job_finder --setup-telegram` | interactive wizard: token → chat id → test message → `.env` |
 | `python3 -m job_finder --doctor` | check config, Reddit reachability and Telegram in one pass |
 | `python3 -m job_finder --demo` | push one sample alert card so you can see the format (writes nothing) |
+| `python3 -m job_finder --site [URL]` | on-page audit of your own site (defaults to `[practice].site`) |
+| `python3 -m job_finder --site --site-report out.md` | same, writing a markdown report |
 | `python3 -m job_finder --test-telegram` | just re-send a test message |
 | `python3 -m job_finder --stats` | how many posts are in the dedupe store |
 | `python3 -m job_finder --prune 90` | drop seen-post history older than 90 days |
@@ -429,12 +431,15 @@ job_finder/
   reddit.py     fetch new posts (JSON -> old.reddit -> Atom fallback), dataclasses
   filters.py    budget parsing, include/exclude rules, 0-10 scoring
   store.py      SQLite dedupe so you never see the same post twice
+  site.py       --site on-page audit: sitemap -> pages -> findings -> report
   notify.py     Telegram HTML cards + console output + matches.jsonl log
   telegram.py   setup wizard, chat discovery, .env handling, --doctor
   config.py     TOML loading with defaults, env-var secrets
   cli.py        argument parsing, sweep loop, baseline run
-tests/          71 offline tests (fixtures + a local HTTP server for the fetch path)
+tests/          93 offline tests (fixtures + a local HTTP server for the fetch path)
 docs/           reddit-seo-closing-script.md — the closing playbook
+                telegram-alert-bot-handoff.md — hand this to anyone who wants one
+                seo-practice-plan.md — 90-day plan on your own store
 config.seo.toml    the live profile: SEO gigs + signals on SEO boards
 deploy/         install.sh (Ubuntu/Debian one-shot) + systemd unit
 Dockerfile      container image for Railway/Fly/NAS/any VPS
@@ -472,6 +477,49 @@ The tool gets you there first; the reply is still yours. What converts on Reddit
   angle each time; retainers come from inbound, not from replies.
 - **50% upfront** on first projects. Agree payment rails (Wise/Payoneer/Deel) before you
   deliver anything, in writing.
+
+## Audit a site you own (`--site`)
+
+The same tool that finds jobs can audit your own site — useful if the store you sell on is also
+your SEO practice ground.
+
+```bash
+py -m job_finder --config config.seo.toml --site --site-report audit-2026-10-30.md
+py -m job_finder --site https://example.com --site-limit 40 --site-delay 1.5
+```
+
+It walks **robots.txt → sitemap(s) → every page** and reports what is cheap to fix and expensive to
+miss:
+
+- missing, short or **duplicate** titles and descriptions (duplicates are the most common real bug)
+- H1 missing or multiplied
+- accidental `noindex` on a page that should rank
+- thin pages (under 300 words)
+- canonicals pointing somewhere else
+- product/kit/playbook pages with **no structured data**
+- sitemaps that give every URL one shared `lastmod`, or carry `priority`/`changefreq` (both ignored)
+
+Output is a severity-sorted list in the terminal plus an optional markdown report:
+
+```
+  HIGH 3   MEDIUM 9   LOW 14
+   ✗ noindex — /hidden
+   ✗ duplicate title on 12 pages — "Practical tools for learning..."
+   ✗ no H1 — /digital/kits/guide
+```
+
+Set your own site once and the flag needs no argument:
+
+```toml
+[practice]
+site = "https://www.ekis.store"
+```
+
+**What it is not:** a rank tracker or a speed test. It answers *is this page publishable?* — pair it
+with Search Console for positions and PageSpeed Insights for field performance.
+
+The 90-day learning plan that uses this on a real store lives in
+**[docs/seo-practice-plan.md](docs/seo-practice-plan.md)**.
 
 ## What it watches now: SEO gigs and SEO signals
 

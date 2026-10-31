@@ -8,6 +8,7 @@
     python -m job_finder --setup-telegram    interactive telegram setup
     python -m job_finder --doctor            check config, reddit, telegram
     python -m job_finder --test-telegram     verify credentials
+    python -m job_finder --site https://x.com   on-page audit of your own site
 """
 
 from __future__ import annotations
@@ -18,13 +19,19 @@ import time
 import traceback
 from pathlib import Path
 
-from . import reddit, telegram
+from . import reddit, site as site_audit, telegram
 from .config import ConfigError, load_config
 from .filters import process
 from .notify import Notifier
 from .store import Store
 
 BANNER = "reddit job watcher"
+
+
+def site_audit_user_agent(cfg: dict) -> str:
+    """Reuse the configured UA, but say what we are doing with it."""
+    base = cfg.get("reddit", {}).get("user_agent", "job-finder")
+    return f"{base} (site audit)"
 
 
 def sweep(cfg: dict, args, notifier: Notifier, store: Store) -> int:
@@ -94,6 +101,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subreddits", default=None, help="comma separated override, e.g. HireaWriter,forhire")
     parser.add_argument("--demo", action="store_true", help="send one sample alert from the fixture to your push channel")
     parser.add_argument("--setup-telegram", action="store_true", help="interactive Telegram setup (writes .env)")
+    parser.add_argument("--site", nargs="?", const="__practice__", default=None,
+                        metavar="URL",
+                        help="audit a site you own; omit the URL to audit [practice].site")
+    parser.add_argument("--site-limit", type=int, default=60, help="max pages to fetch for --site")
+    parser.add_argument("--site-delay", type=float, default=1.0, help="seconds between page fetches")
+    parser.add_argument("--site-report", default="", metavar="PATH",
+                        help="write the audit as markdown to PATH")
     parser.add_argument("--doctor", action="store_true", help="check config, Reddit and Telegram")
     parser.add_argument("--test-telegram", action="store_true", help="send a test message and exit")
     parser.add_argument("--token", default="", help="bot token for --setup-telegram (non-interactive)")
@@ -119,6 +133,26 @@ def main(argv: list[str] | None = None) -> int:
 
     store = Store(cfg["storage"].get("db_path", "seen.sqlite3"))
     notifier = Notifier(cfg, dry_run=args.dry_run, quiet=args.quiet)
+
+    if args.site:
+        target = args.site
+        if target == "__practice__":
+            target = cfg.get("practice", {}).get("site", "")
+            if not target:
+                print("\n  no site given and [practice].site is empty in the config\n",
+                      file=sys.stderr)
+                store.close()
+                return 2
+            print(f"  auditing [practice].site = {target}")
+        code = site_audit.run(
+            target,
+            user_agent=site_audit_user_agent(cfg),
+            limit=args.site_limit,
+            delay=args.site_delay,
+            report_path=args.site_report,
+        )
+        store.close()
+        return code
 
     if args.demo:
         try:
